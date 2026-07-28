@@ -1,0 +1,32 @@
+services:
+  mysql:
+    image: mysql:8.4.11
+    container_name: ai-ticket-mysql
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    ports:
+      - "3307:3306"
+
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+
+    volumes:
+      - ai_ticket_mysql_data:/var/lib/mysql
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h localhost -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  ai_ticket_mysql_data:
