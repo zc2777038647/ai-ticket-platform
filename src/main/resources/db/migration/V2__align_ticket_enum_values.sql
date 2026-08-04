@@ -1,0 +1,14 @@
+UPDATE tickets
+SET status = CASE status
+                 WHEN 'PENDING' THEN 'OPEN'
+                 WHEN 'PROCESSING' THEN 'IN_PROGRESS'
+                 WHEN 'COMPLETED' THEN 'RESOLVED'
+                 ELSE status
+    END
+WHERE status IN ('PENDING', 'PROCESSING', 'COMPLETED');
+
+ALTER TABLE tickets
+    MODIFY COLUMN priority VARCHAR(16) NOT NULL
+        COMMENT '优先级：LOW, MEDIUM, HIGH, URGENT',
+    MODIFY COLUMN status VARCHAR(16) NOT NULL DEFAULT 'OPEN'
+        COMMENT '状态：OPEN, IN_PROGRESS, RESOLVED, CLOSED';
