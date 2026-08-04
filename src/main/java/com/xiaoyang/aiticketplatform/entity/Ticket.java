@@ -20,6 +20,8 @@ public class Ticket {
 
     private String creatorName;
 
+    private Long creatorUserId;
+
     private TicketPriority priority;
 
     private TicketStatus status;
@@ -61,6 +63,14 @@ public class Ticket {
 
     public void setCreatorName(String creatorName) {
         this.creatorName = creatorName;
+    }
+
+    public Long getCreatorUserId() {
+        return creatorUserId;
+    }
+
+    public void setCreatorUserId(Long creatorUserId) {
+        this.creatorUserId = creatorUserId;
     }
 
     public TicketPriority getPriority() {
