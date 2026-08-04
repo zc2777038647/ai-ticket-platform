@@ -165,6 +165,19 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldReturnConflictWhenUsernameAlreadyExists() throws Exception {
+        mockMvc.perform(get("/test/users/username-conflict"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(40902))
+                .andExpect(jsonPath("$.message").value("用户名已存在"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("uk_users_username"))))
+                .andExpect(content().string(not(containsString("DuplicateKeyException"))))
+                .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("stackTrace"))));
+    }
+
+    @Test
     void shouldSafelyHandleUnmappedBusinessErrorCode() throws Exception {
         mockMvc.perform(get("/test/tickets/unmapped-business-error"))
                 .andExpect(status().isInternalServerError())
@@ -299,6 +312,11 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/tickets/status-conflict")
         void throwTicketStatusConflict() {
             throw new BusinessException(ErrorCode.TICKET_STATUS_CONFLICT);
+        }
+
+        @GetMapping("/test/users/username-conflict")
+        void throwUsernameAlreadyExists() {
+            throw new BusinessException(ErrorCode.USERNAME_ALREADY_EXISTS);
         }
 
         @GetMapping("/test/tickets/unmapped-business-error")

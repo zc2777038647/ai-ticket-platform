@@ -119,7 +119,9 @@ public class GlobalExceptionHandler {
     private HttpStatus resolveBusinessHttpStatus(ErrorCode errorCode) {
         return switch (errorCode) {
             case TICKET_NOT_FOUND -> HttpStatus.NOT_FOUND;
-            case INVALID_TICKET_STATUS_TRANSITION, TICKET_STATUS_CONFLICT -> HttpStatus.CONFLICT;
+            case INVALID_TICKET_STATUS_TRANSITION,
+                 TICKET_STATUS_CONFLICT,
+                 USERNAME_ALREADY_EXISTS -> HttpStatus.CONFLICT;
             default -> null;
         };
     }

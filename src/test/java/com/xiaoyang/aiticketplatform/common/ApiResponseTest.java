@@ -47,6 +47,11 @@ class ApiResponseTest {
                         ErrorCode.TICKET_STATUS_CONFLICT,
                         40901,
                         "工单状态已发生变化，请刷新后重试"
+                ),
+                () -> assertErrorCode(
+                        ErrorCode.USERNAME_ALREADY_EXISTS,
+                        40902,
+                        "用户名已存在"
                 )
         );
     }

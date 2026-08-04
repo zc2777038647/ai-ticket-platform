@@ -7,6 +7,7 @@ public enum ErrorCode {
     TICKET_NOT_FOUND(40400, "工单不存在"),
     INVALID_TICKET_STATUS_TRANSITION(40900, "工单状态流转不合法"),
     TICKET_STATUS_CONFLICT(40901, "工单状态已发生变化，请刷新后重试"),
+    USERNAME_ALREADY_EXISTS(40902, "用户名已存在"),
     INTERNAL_ERROR(50000, "服务器内部错误");
 
     private final int code;
