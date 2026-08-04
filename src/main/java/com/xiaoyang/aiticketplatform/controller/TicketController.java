@@ -5,8 +5,11 @@ import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.service.TicketService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,5 +32,13 @@ public class TicketController {
         TicketResponse ticketResponse = ticketService.createTicket(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success(ticketResponse));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<ApiResponse<TicketResponse>> getTicketById(
+            @PathVariable @Positive(message = "工单ID必须为正数") Long id
+    ) {
+        TicketResponse ticketResponse = ticketService.getTicketById(id);
+        return ResponseEntity.ok(ApiResponse.success(ticketResponse));
     }
 }
