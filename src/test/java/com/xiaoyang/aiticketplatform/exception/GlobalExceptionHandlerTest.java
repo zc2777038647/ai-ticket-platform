@@ -3,6 +3,7 @@ package com.xiaoyang.aiticketplatform.exception;
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
+import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import org.junit.jupiter.api.AfterEach;
@@ -18,6 +19,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -31,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -183,6 +186,21 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldReturnFieldErrorsForRequestBodyValidatedByHandlerMethodValidation() throws Exception {
+        mockMvc.perform(patch("/test/tickets/100/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": null
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"))
+                .andExpect(jsonPath("$.data.status").value("目标状态不能为空"));
+    }
+
+    @Test
     void shouldReturnParameterFormatErrorForNonNumericPathVariable() throws Exception {
         mockMvc.perform(get("/test/ids/abc"))
                 .andExpect(status().isBadRequest())
@@ -291,6 +309,14 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/ids/{id}")
         Long getById(@PathVariable @Positive(message = "工单ID必须为正数") Long id) {
             return id;
+        }
+
+        @PatchMapping("/test/tickets/{id}/status")
+        UpdateTicketStatusRequest updateTicketStatus(
+                @PathVariable @Positive(message = "工单ID必须为正数") Long id,
+                @Valid @RequestBody UpdateTicketStatusRequest request
+        ) {
+            return request;
         }
 
         @GetMapping("/test/pages")

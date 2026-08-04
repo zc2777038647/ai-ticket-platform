@@ -3,6 +3,7 @@ package com.xiaoyang.aiticketplatform.controller;
 import com.xiaoyang.aiticketplatform.common.ApiResponse;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
+import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.service.TicketService;
@@ -12,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -51,5 +53,14 @@ public class TicketController {
     ) {
         PageResponse<TicketResponse> pageResponse = ticketService.pageTickets(query);
         return ResponseEntity.ok(ApiResponse.success(pageResponse));
+    }
+
+    @PatchMapping("/{id}/status")
+    public ResponseEntity<ApiResponse<TicketResponse>> updateTicketStatus(
+            @PathVariable @Positive(message = "工单ID必须为正数") Long id,
+            @Valid @RequestBody UpdateTicketStatusRequest request
+    ) {
+        TicketResponse ticketResponse = ticketService.updateTicketStatus(id, request);
+        return ResponseEntity.ok(ApiResponse.success(ticketResponse));
     }
 }

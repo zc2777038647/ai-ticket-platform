@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.validation.method.ParameterErrors;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -59,12 +60,29 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(HandlerMethodValidationException.class)
-    public ResponseEntity<ApiResponse<Void>> handleHandlerMethodValidation(
+    public ResponseEntity<ApiResponse<Map<String, String>>> handleHandlerMethodValidation(
             HandlerMethodValidationException exception
     ) {
-        LOGGER.warn("请求参数校验失败");
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        exception.getParameterValidationResults().stream()
+                .filter(ParameterErrors.class::isInstance)
+                .map(ParameterErrors.class::cast)
+                .flatMap(errors -> errors.getFieldErrors().stream())
+                .forEach(fieldError -> {
+                    String message = fieldError.getDefaultMessage();
+                    if (message == null || message.isBlank()) {
+                        message = DEFAULT_VALIDATION_MESSAGE;
+                    }
+                    fieldErrors.putIfAbsent(fieldError.getField(), message);
+                });
+
+        LOGGER.warn("请求参数校验失败: {}", fieldErrors);
+        if (fieldErrors.isEmpty()) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.failure(ErrorCode.VALIDATION_ERROR));
+        }
         return ResponseEntity.badRequest()
-                .body(ApiResponse.failure(ErrorCode.VALIDATION_ERROR));
+                .body(ApiResponse.failure(ErrorCode.VALIDATION_ERROR, fieldErrors));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

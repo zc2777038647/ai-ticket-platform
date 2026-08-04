@@ -3,6 +3,7 @@ package com.xiaoyang.aiticketplatform.controller;
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
+import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
@@ -32,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -39,6 +41,7 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -329,6 +332,155 @@ class TicketControllerTest {
         verifyNoInteractions(ticketService);
     }
 
+    @Test
+    void shouldUpdateTicketStatus() throws Exception {
+        TicketResponse serviceResponse = new TicketResponse(
+                100L,
+                "状态更新测试工单",
+                "状态更新测试描述",
+                "状态更新测试用户",
+                TicketPriority.HIGH,
+                TicketStatus.IN_PROGRESS
+        );
+        when(ticketService.updateTicketStatus(
+                100L,
+                new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+        )).thenReturn(serviceResponse);
+
+        mockMvc.perform(patch("/api/tickets/100/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(statusRequestJson("IN_PROGRESS")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.message").value("success"))
+                .andExpect(jsonPath("$.data.id").value(100))
+                .andExpect(jsonPath("$.data.title").value("状态更新测试工单"))
+                .andExpect(jsonPath("$.data.description").value("状态更新测试描述"))
+                .andExpect(jsonPath("$.data.creatorName").value("状态更新测试用户"))
+                .andExpect(jsonPath("$.data.priority").value("HIGH"))
+                .andExpect(jsonPath("$.data.status").value("IN_PROGRESS"));
+
+        ArgumentCaptor<UpdateTicketStatusRequest> requestCaptor = ArgumentCaptor.forClass(
+                UpdateTicketStatusRequest.class
+        );
+        verify(ticketService, times(1)).updateTicketStatus(eq(100L), requestCaptor.capture());
+        verify(ticketService, never()).createTicket(any(CreateTicketRequest.class));
+        verify(ticketService, never()).getTicketById(any());
+        verify(ticketService, never()).pageTickets(any(TicketPageQuery.class));
+        verifyNoMoreInteractions(ticketService);
+        assertEquals(TicketStatus.IN_PROGRESS, requestCaptor.getValue().status());
+    }
+
+    @Test
+    void shouldRejectNullUpdateStatusWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/100/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": null
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"))
+                .andExpect(jsonPath("$.data.status").value("目标状态不能为空"));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectMissingUpdateStatusWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/100/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"))
+                .andExpect(jsonPath("$.data.status").value("目标状态不能为空"));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectUnknownUpdateStatusWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/100/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(statusRequestJson("UNKNOWN")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40001))
+                .andExpect(jsonPath("$.message").value("请求体格式错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectZeroUpdateTicketIdWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/0/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(statusRequestJson("IN_PROGRESS")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectNonNumericUpdateTicketIdWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/abc/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(statusRequestJson("IN_PROGRESS")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40002))
+                .andExpect(jsonPath("$.message").value("请求参数格式错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldReturnNotFoundWhenUpdatingMissingTicket() throws Exception {
+        assertStatusUpdateBusinessError(ErrorCode.TICKET_NOT_FOUND, 404);
+    }
+
+    @Test
+    void shouldReturnConflictForInvalidStatusTransition() throws Exception {
+        assertStatusUpdateBusinessError(ErrorCode.INVALID_TICKET_STATUS_TRANSITION, 409);
+    }
+
+    @Test
+    void shouldReturnConflictForConcurrentStatusChange() throws Exception {
+        assertStatusUpdateBusinessError(ErrorCode.TICKET_STATUS_CONFLICT, 409);
+    }
+
+    private void assertStatusUpdateBusinessError(ErrorCode errorCode, int expectedHttpStatus)
+            throws Exception {
+        when(ticketService.updateTicketStatus(
+                100L,
+                new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+        )).thenThrow(new BusinessException(errorCode));
+
+        mockMvc.perform(patch("/api/tickets/100/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(statusRequestJson("IN_PROGRESS")))
+                .andExpect(status().is(expectedHttpStatus))
+                .andExpect(jsonPath("$.code").value(errorCode.getCode()))
+                .andExpect(jsonPath("$.message").value(errorCode.getMessage()))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("java.lang"))))
+                .andExpect(content().string(not(containsString("stackTrace"))))
+                .andExpect(content().string(not(containsString("TicketServiceImpl"))));
+
+        verify(ticketService, times(1)).updateTicketStatus(
+                100L,
+                new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+        );
+        verifyNoMoreInteractions(ticketService);
+    }
+
     private static String validRequestJson() {
         return """
                 {
@@ -338,5 +490,13 @@ class TicketControllerTest {
                   "priority": "HIGH"
                 }
                 """;
+    }
+
+    private static String statusRequestJson(String status) {
+        return """
+                {
+                  "status": "%s"
+                }
+                """.formatted(status);
     }
 }
