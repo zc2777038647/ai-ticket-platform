@@ -2,6 +2,7 @@ package com.xiaoyang.aiticketplatform.exception;
 
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
+import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import org.junit.jupiter.api.AfterEach;
@@ -10,9 +11,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -21,6 +26,10 @@ import org.springframework.web.bind.annotation.RestController;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -148,6 +157,58 @@ class GlobalExceptionHandlerTest {
                 .andExpect(content().string(not(containsString("MethodArgumentTypeMismatchException"))));
     }
 
+    @Test
+    void shouldReturnValidationErrorForInvalidModelAttribute() throws Exception {
+        MvcResult result = mockMvc.perform(get("/test/pages").param("page", "0"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"))
+                .andExpect(jsonPath("$.data.page").value("页码必须大于等于1"))
+                .andReturn();
+
+        MethodArgumentNotValidException exception = assertInstanceOf(
+                MethodArgumentNotValidException.class,
+                result.getResolvedException()
+        );
+        FieldError fieldError = exception.getBindingResult().getFieldError("page");
+        assertNotNull(fieldError);
+        assertFalse(fieldError.isBindingFailure());
+    }
+
+    @Test
+    void shouldReturnParameterFormatErrorForNonNumericModelAttributeField() throws Exception {
+        MvcResult result = mockMvc.perform(get("/test/pages").param("page", "abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40002))
+                .andExpect(jsonPath("$.message").value("请求参数格式错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andReturn();
+
+        assertModelAttributeBindingFailure(result, "page");
+    }
+
+    @Test
+    void shouldReturnParameterFormatErrorForUnknownModelAttributeEnum() throws Exception {
+        MvcResult result = mockMvc.perform(get("/test/pages").param("status", "UNKNOWN"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40002))
+                .andExpect(jsonPath("$.message").value("请求参数格式错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andReturn();
+
+        assertModelAttributeBindingFailure(result, "status");
+    }
+
+    private static void assertModelAttributeBindingFailure(MvcResult result, String fieldName) {
+        MethodArgumentNotValidException exception = assertInstanceOf(
+                MethodArgumentNotValidException.class,
+                result.getResolvedException()
+        );
+        FieldError fieldError = exception.getBindingResult().getFieldError(fieldName);
+        assertNotNull(fieldError);
+        assertTrue(fieldError.isBindingFailure());
+    }
+
     private static String validRequestJson() {
         return """
                 {
@@ -180,6 +241,11 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/ids/{id}")
         Long getById(@PathVariable @Positive(message = "工单ID必须为正数") Long id) {
             return id;
+        }
+
+        @GetMapping("/test/pages")
+        TicketPageQuery pageTickets(@Valid @ModelAttribute TicketPageQuery query) {
+            return query;
         }
     }
 }

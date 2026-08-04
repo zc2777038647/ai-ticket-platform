@@ -27,6 +27,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Map<String, String>>> handleMethodArgumentNotValid(
             MethodArgumentNotValidException exception
     ) {
+        boolean hasBindingFailure = exception.getBindingResult().getFieldErrors().stream()
+                .anyMatch(FieldError::isBindingFailure);
+        if (hasBindingFailure) {
+            LOGGER.warn("请求参数格式错误");
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.failure(ErrorCode.REQUEST_PARAMETER_INVALID));
+        }
+
         Map<String, String> fieldErrors = new LinkedHashMap<>();
         for (FieldError fieldError : exception.getBindingResult().getFieldErrors()) {
             String message = fieldError.getDefaultMessage();

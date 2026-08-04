@@ -2,6 +2,8 @@ package com.xiaoyang.aiticketplatform.controller;
 
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
+import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
+import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
@@ -21,11 +23,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
+import java.util.List;
+
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -197,6 +202,125 @@ class TicketControllerTest {
     @Test
     void shouldRejectNonNumericIdWithoutCallingService() throws Exception {
         mockMvc.perform(get("/api/tickets/abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40002))
+                .andExpect(jsonPath("$.message").value("请求参数格式错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldUseDefaultPaginationWhenQueryParametersAreAbsent() throws Exception {
+        PageResponse<TicketResponse> serviceResponse = new PageResponse<>(List.of(), 0, 0, 1, 20);
+        when(ticketService.pageTickets(any(TicketPageQuery.class))).thenReturn(serviceResponse);
+
+        mockMvc.perform(get("/api/tickets"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.message").value("success"))
+                .andExpect(jsonPath("$.data.records").isEmpty())
+                .andExpect(jsonPath("$.data.total").value(0))
+                .andExpect(jsonPath("$.data.pages").value(0))
+                .andExpect(jsonPath("$.data.current").value(1))
+                .andExpect(jsonPath("$.data.size").value(20));
+
+        ArgumentCaptor<TicketPageQuery> queryCaptor = ArgumentCaptor.forClass(TicketPageQuery.class);
+        verify(ticketService, times(1)).pageTickets(queryCaptor.capture());
+        verifyNoMoreInteractions(ticketService);
+        TicketPageQuery query = queryCaptor.getValue();
+        assertAll(
+                () -> assertEquals(1, query.page()),
+                () -> assertEquals(20, query.size()),
+                () -> assertNull(query.status()),
+                () -> assertNull(query.priority()),
+                () -> assertNull(query.creatorName()),
+                () -> assertNull(query.keyword())
+        );
+    }
+
+    @Test
+    void shouldBindCompletePaginationQueryAndReturnResponse() throws Exception {
+        TicketResponse ticket = new TicketResponse(
+                200L,
+                "登录异常",
+                "无法登录系统",
+                "张三",
+                TicketPriority.HIGH,
+                TicketStatus.OPEN
+        );
+        PageResponse<TicketResponse> serviceResponse = new PageResponse<>(List.of(ticket), 11, 2, 2, 10);
+        when(ticketService.pageTickets(any(TicketPageQuery.class))).thenReturn(serviceResponse);
+
+        mockMvc.perform(get("/api/tickets")
+                        .param("page", "2")
+                        .param("size", "10")
+                        .param("status", "OPEN")
+                        .param("priority", "HIGH")
+                        .param("creatorName", " 张三 ")
+                        .param("keyword", " 登录 "))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.message").value("success"))
+                .andExpect(jsonPath("$.data.total").value(11))
+                .andExpect(jsonPath("$.data.pages").value(2))
+                .andExpect(jsonPath("$.data.current").value(2))
+                .andExpect(jsonPath("$.data.size").value(10))
+                .andExpect(jsonPath("$.data.records.length()").value(1))
+                .andExpect(jsonPath("$.data.records[0].id").value(200))
+                .andExpect(jsonPath("$.data.records[0].priority").value("HIGH"))
+                .andExpect(jsonPath("$.data.records[0].status").value("OPEN"));
+
+        ArgumentCaptor<TicketPageQuery> queryCaptor = ArgumentCaptor.forClass(TicketPageQuery.class);
+        verify(ticketService, times(1)).pageTickets(queryCaptor.capture());
+        verifyNoMoreInteractions(ticketService);
+        TicketPageQuery query = queryCaptor.getValue();
+        assertAll(
+                () -> assertEquals(2, query.page()),
+                () -> assertEquals(10, query.size()),
+                () -> assertEquals(TicketStatus.OPEN, query.status()),
+                () -> assertEquals(TicketPriority.HIGH, query.priority()),
+                () -> assertEquals(" 张三 ", query.creatorName()),
+                () -> assertEquals(" 登录 ", query.keyword())
+        );
+    }
+
+    @Test
+    void shouldRejectZeroPageWithoutCallingService() throws Exception {
+        mockMvc.perform(get("/api/tickets").param("page", "0"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"))
+                .andExpect(jsonPath("$.data.page").value("页码必须大于等于1"));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectOversizedPageSizeWithoutCallingService() throws Exception {
+        mockMvc.perform(get("/api/tickets").param("size", "101"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"))
+                .andExpect(jsonPath("$.data.size").value("每页数量不能超过100"));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectNonNumericPageWithoutCallingService() throws Exception {
+        mockMvc.perform(get("/api/tickets").param("page", "abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40002))
+                .andExpect(jsonPath("$.message").value("请求参数格式错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectUnknownStatusWithoutCallingService() throws Exception {
+        mockMvc.perform(get("/api/tickets").param("status", "UNKNOWN"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40002))
                 .andExpect(jsonPath("$.message").value("请求参数格式错误"))
