@@ -1,10 +1,12 @@
 package com.xiaoyang.aiticketplatform.service.impl;
 
+import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
+import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,12 +17,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -94,6 +98,43 @@ class TicketServiceImplTest {
         verifyNoMoreInteractions(ticketMapper);
     }
 
+    @Test
+    void shouldReturnTicketResponseWhenTicketExists() {
+        Ticket ticket = existingTicket();
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+
+        TicketResponse response = ticketService.getTicketById(100L);
+
+        verify(ticketMapper, times(1)).selectById(100L);
+        verify(ticketMapper, never()).insert(any(Ticket.class));
+        verifyNoMoreInteractions(ticketMapper);
+        assertNotNull(response);
+        assertAll(
+                () -> assertEquals(100L, response.id()),
+                () -> assertEquals("查询测试工单", response.title()),
+                () -> assertEquals("查询测试描述", response.description()),
+                () -> assertEquals("查询测试用户", response.creatorName()),
+                () -> assertEquals(TicketPriority.HIGH, response.priority()),
+                () -> assertEquals(TicketStatus.OPEN, response.status())
+        );
+    }
+
+    @Test
+    void shouldThrowBusinessExceptionWhenTicketDoesNotExist() {
+        when(ticketMapper.selectById(999L)).thenReturn(null);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.getTicketById(999L)
+        );
+
+        assertEquals(ErrorCode.TICKET_NOT_FOUND, exception.getErrorCode());
+        assertEquals("工单不存在", exception.getMessage());
+        verify(ticketMapper, times(1)).selectById(999L);
+        verify(ticketMapper, never()).insert(any(Ticket.class));
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
     private static CreateTicketRequest validRequest() {
         return new CreateTicketRequest(
                 "无法登录系统",
@@ -101,5 +142,16 @@ class TicketServiceImplTest {
                 "小杨",
                 TicketPriority.HIGH
         );
+    }
+
+    private static Ticket existingTicket() {
+        Ticket ticket = new Ticket();
+        ticket.setId(100L);
+        ticket.setTitle("查询测试工单");
+        ticket.setDescription("查询测试描述");
+        ticket.setCreatorName("查询测试用户");
+        ticket.setPriority(TicketPriority.HIGH);
+        ticket.setStatus(TicketStatus.OPEN);
+        return ticket;
     }
 }

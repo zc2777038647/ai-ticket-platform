@@ -6,4 +6,6 @@ import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 public interface TicketService {
 
     TicketResponse createTicket(CreateTicketRequest request);
+
+    TicketResponse getTicketById(Long id);
 }
