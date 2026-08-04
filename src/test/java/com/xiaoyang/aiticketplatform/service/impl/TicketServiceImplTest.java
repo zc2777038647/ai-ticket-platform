@@ -1,7 +1,11 @@
 package com.xiaoyang.aiticketplatform.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
+import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
+import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
@@ -15,11 +19,14 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -135,6 +142,88 @@ class TicketServiceImplTest {
         verifyNoMoreInteractions(ticketMapper);
     }
 
+    @Test
+    void shouldConvertPagedTicketsAndPaginationMetadata() {
+        TicketPageQuery query = new TicketPageQuery(
+                2,
+                2,
+                TicketStatus.OPEN,
+                TicketPriority.HIGH,
+                " 测试用户 ",
+                " 登录 "
+        );
+        Page<Ticket> mapperPage = new Page<>(2, 2);
+        mapperPage.setTotal(5);
+        mapperPage.setRecords(List.of(
+                ticket(201L, "登录故障一", "描述一", "测试用户", TicketPriority.HIGH, TicketStatus.OPEN),
+                ticket(200L, "登录故障二", "描述二", "测试用户", TicketPriority.HIGH, TicketStatus.OPEN)
+        ));
+        when(ticketMapper.selectPage(any(Page.class), any(LambdaQueryWrapper.class)))
+                .thenReturn(mapperPage);
+
+        PageResponse<TicketResponse> response = ticketService.pageTickets(query);
+
+        ArgumentCaptor<Page<Ticket>> pageCaptor = ArgumentCaptor.forClass(Page.class);
+        verify(ticketMapper, times(1)).selectPage(pageCaptor.capture(), any(LambdaQueryWrapper.class));
+        verify(ticketMapper, never()).insert(any(Ticket.class));
+        verify(ticketMapper, never()).selectById(any());
+        verifyNoMoreInteractions(ticketMapper);
+
+        Page<Ticket> requestedPage = pageCaptor.getValue();
+        assertAll(
+                () -> assertEquals(2L, requestedPage.getCurrent()),
+                () -> assertEquals(2L, requestedPage.getSize()),
+                () -> assertEquals(5L, response.total()),
+                () -> assertEquals(3L, response.pages()),
+                () -> assertEquals(2L, response.current()),
+                () -> assertEquals(2L, response.size()),
+                () -> assertEquals(2, response.records().size()),
+                () -> assertTicketResponse(
+                        response.records().get(0),
+                        201L,
+                        "登录故障一",
+                        "描述一",
+                        "测试用户",
+                        TicketPriority.HIGH,
+                        TicketStatus.OPEN
+                ),
+                () -> assertTicketResponse(
+                        response.records().get(1),
+                        200L,
+                        "登录故障二",
+                        "描述二",
+                        "测试用户",
+                        TicketPriority.HIGH,
+                        TicketStatus.OPEN
+                )
+        );
+    }
+
+    @Test
+    void shouldConvertEmptyPage() {
+        TicketPageQuery query = new TicketPageQuery(3, 20, null, null, null, null);
+        Page<Ticket> mapperPage = new Page<>(3, 20);
+        mapperPage.setTotal(0);
+        mapperPage.setRecords(List.of());
+        when(ticketMapper.selectPage(any(Page.class), any(LambdaQueryWrapper.class)))
+                .thenReturn(mapperPage);
+
+        PageResponse<TicketResponse> response = ticketService.pageTickets(query);
+
+        ArgumentCaptor<Page<Ticket>> pageCaptor = ArgumentCaptor.forClass(Page.class);
+        verify(ticketMapper, times(1)).selectPage(pageCaptor.capture(), any(LambdaQueryWrapper.class));
+        verifyNoMoreInteractions(ticketMapper);
+        assertAll(
+                () -> assertEquals(3L, pageCaptor.getValue().getCurrent()),
+                () -> assertEquals(20L, pageCaptor.getValue().getSize()),
+                () -> assertTrue(response.records().isEmpty()),
+                () -> assertEquals(0L, response.total()),
+                () -> assertEquals(0L, response.pages()),
+                () -> assertEquals(3L, response.current()),
+                () -> assertEquals(20L, response.size())
+        );
+    }
+
     private static CreateTicketRequest validRequest() {
         return new CreateTicketRequest(
                 "无法登录系统",
@@ -145,13 +234,50 @@ class TicketServiceImplTest {
     }
 
     private static Ticket existingTicket() {
+        return ticket(
+                100L,
+                "查询测试工单",
+                "查询测试描述",
+                "查询测试用户",
+                TicketPriority.HIGH,
+                TicketStatus.OPEN
+        );
+    }
+
+    private static Ticket ticket(
+            Long id,
+            String title,
+            String description,
+            String creatorName,
+            TicketPriority priority,
+            TicketStatus status
+    ) {
         Ticket ticket = new Ticket();
-        ticket.setId(100L);
-        ticket.setTitle("查询测试工单");
-        ticket.setDescription("查询测试描述");
-        ticket.setCreatorName("查询测试用户");
-        ticket.setPriority(TicketPriority.HIGH);
-        ticket.setStatus(TicketStatus.OPEN);
+        ticket.setId(id);
+        ticket.setTitle(title);
+        ticket.setDescription(description);
+        ticket.setCreatorName(creatorName);
+        ticket.setPriority(priority);
+        ticket.setStatus(status);
         return ticket;
+    }
+
+    private static void assertTicketResponse(
+            TicketResponse response,
+            Long id,
+            String title,
+            String description,
+            String creatorName,
+            TicketPriority priority,
+            TicketStatus status
+    ) {
+        assertAll(
+                () -> assertEquals(id, response.id()),
+                () -> assertEquals(title, response.title()),
+                () -> assertEquals(description, response.description()),
+                () -> assertEquals(creatorName, response.creatorName()),
+                () -> assertEquals(priority, response.priority()),
+                () -> assertEquals(status, response.status())
+        );
     }
 }
