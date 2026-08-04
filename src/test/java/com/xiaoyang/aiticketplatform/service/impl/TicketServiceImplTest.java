@@ -1,10 +1,14 @@
 package com.xiaoyang.aiticketplatform.service.impl;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
+import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
@@ -12,6 +16,8 @@ import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -28,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -36,6 +43,14 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class TicketServiceImplTest {
+
+    @BeforeAll
+    static void initializeMybatisPlusTableMetadata() {
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""),
+                Ticket.class
+        );
+    }
 
     @Mock
     private TicketMapper ticketMapper;
@@ -222,6 +237,117 @@ class TicketServiceImplTest {
                 () -> assertEquals(3L, response.current()),
                 () -> assertEquals(20L, response.size())
         );
+    }
+
+    @Test
+    void shouldUpdateTicketStatusAndReturnResponse() {
+        Ticket ticket = existingTicket();
+        UpdateTicketStatusRequest request = new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS);
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+
+        TicketResponse response = ticketService.updateTicketStatus(100L, request);
+
+        ArgumentCaptor<LambdaUpdateWrapper<Ticket>> wrapperCaptor = ArgumentCaptor.forClass(
+                LambdaUpdateWrapper.class
+        );
+        verify(ticketMapper, times(1)).selectById(100L);
+        verify(ticketMapper, times(1)).update(isNull(), wrapperCaptor.capture());
+        verify(ticketMapper, never()).insert(any(Ticket.class));
+        verify(ticketMapper, never()).selectPage(any(Page.class), any(LambdaQueryWrapper.class));
+        verifyNoMoreInteractions(ticketMapper);
+
+        assertNotNull(wrapperCaptor.getValue());
+        assertAll(
+                () -> assertEquals(TicketStatus.IN_PROGRESS, ticket.getStatus()),
+                () -> assertTicketResponse(
+                        response,
+                        100L,
+                        "查询测试工单",
+                        "查询测试描述",
+                        "查询测试用户",
+                        TicketPriority.HIGH,
+                        TicketStatus.IN_PROGRESS
+                )
+        );
+    }
+
+    @Test
+    void shouldThrowWhenUpdatingStatusOfMissingTicket() {
+        when(ticketMapper.selectById(999L)).thenReturn(null);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.updateTicketStatus(
+                        999L,
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                )
+        );
+
+        assertEquals(ErrorCode.TICKET_NOT_FOUND, exception.getErrorCode());
+        verify(ticketMapper, times(1)).selectById(999L);
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @Test
+    void shouldRejectInvalidStatusTransitionWithoutUpdating() {
+        Ticket ticket = existingTicket();
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.updateTicketStatus(
+                        100L,
+                        new UpdateTicketStatusRequest(TicketStatus.CLOSED)
+                )
+        );
+
+        assertEquals(ErrorCode.INVALID_TICKET_STATUS_TRANSITION, exception.getErrorCode());
+        assertEquals(TicketStatus.OPEN, ticket.getStatus());
+        verify(ticketMapper, times(1)).selectById(100L);
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @Test
+    void shouldThrowConflictWhenConditionalUpdateAffectsNoRows() {
+        Ticket ticket = existingTicket();
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(0);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.updateTicketStatus(
+                        100L,
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                )
+        );
+
+        assertEquals(ErrorCode.TICKET_STATUS_CONFLICT, exception.getErrorCode());
+        assertEquals(TicketStatus.OPEN, ticket.getStatus());
+        verify(ticketMapper, times(1)).selectById(100L);
+        verify(ticketMapper, times(1)).update(isNull(), any(LambdaUpdateWrapper.class));
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @Test
+    void shouldThrowIllegalStateWhenConditionalUpdateAffectsMultipleRows() {
+        Ticket ticket = existingTicket();
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(2);
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> ticketService.updateTicketStatus(
+                        100L,
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                )
+        );
+
+        assertEquals("更新工单状态失败：数据库更新影响行数不是 1", exception.getMessage());
+        assertEquals(TicketStatus.OPEN, ticket.getStatus());
+        verify(ticketMapper, times(1)).selectById(100L);
+        verify(ticketMapper, times(1)).update(isNull(), any(LambdaUpdateWrapper.class));
+        verifyNoMoreInteractions(ticketMapper);
     }
 
     private static CreateTicketRequest validRequest() {

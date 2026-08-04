@@ -1,10 +1,13 @@
 package com.xiaoyang.aiticketplatform.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
+import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
@@ -94,6 +97,37 @@ public class TicketServiceImpl implements TicketService {
                 result.getCurrent(),
                 result.getSize()
         );
+    }
+
+    @Override
+    @Transactional
+    public TicketResponse updateTicketStatus(Long id, UpdateTicketStatusRequest request) {
+        Ticket ticket = ticketMapper.selectById(id);
+        if (ticket == null) {
+            throw new BusinessException(ErrorCode.TICKET_NOT_FOUND);
+        }
+
+        TicketStatus currentStatus = ticket.getStatus();
+        TicketStatus targetStatus = request.status();
+        if (!currentStatus.canTransitionTo(targetStatus)) {
+            throw new BusinessException(ErrorCode.INVALID_TICKET_STATUS_TRANSITION);
+        }
+
+        LambdaUpdateWrapper<Ticket> updateWrapper = Wrappers.lambdaUpdate(Ticket.class)
+                .eq(Ticket::getId, id)
+                .eq(Ticket::getStatus, currentStatus)
+                .set(Ticket::getStatus, targetStatus);
+        int affectedRows = ticketMapper.update(null, updateWrapper);
+
+        if (affectedRows == 0) {
+            throw new BusinessException(ErrorCode.TICKET_STATUS_CONFLICT);
+        }
+        if (affectedRows != 1) {
+            throw new IllegalStateException("更新工单状态失败：数据库更新影响行数不是 1");
+        }
+
+        ticket.setStatus(targetStatus);
+        return toResponse(ticket);
     }
 
     private TicketResponse toResponse(Ticket ticket) {
