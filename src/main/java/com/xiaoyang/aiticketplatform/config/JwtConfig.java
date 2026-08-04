@@ -8,6 +8,10 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import com.xiaoyang.aiticketplatform.security.ApplicationJwtValidator;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
@@ -42,10 +46,17 @@ public class JwtConfig {
     }
 
     @Bean
-    public JwtDecoder jwtDecoder(SecretKey jwtSecretKey) {
-        return NimbusJwtDecoder.withSecretKey(jwtSecretKey)
+    public JwtDecoder jwtDecoder(SecretKey jwtSecretKey, JwtProperties properties) {
+        NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withSecretKey(jwtSecretKey)
                 .macAlgorithm(MacAlgorithm.HS256)
                 .build();
+        OAuth2TokenValidator<org.springframework.security.oauth2.jwt.Jwt> validator =
+                new DelegatingOAuth2TokenValidator<>(
+                        JwtValidators.createDefaultWithIssuer(properties.getIssuer()),
+                        new ApplicationJwtValidator()
+                );
+        jwtDecoder.setJwtValidator(validator);
+        return jwtDecoder;
     }
 
     @Bean

@@ -20,6 +20,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
 import static org.hamcrest.Matchers.containsString;
@@ -33,9 +35,14 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 
 @ExtendWith(MockitoExtension.class)
 class AuthControllerTest {
@@ -237,6 +244,36 @@ class AuthControllerTest {
 
         verify(authService, times(1)).login(any(LoginRequest.class));
         verifyNoMoreInteractions(authService);
+    }
+
+    @Test
+    void shouldReturnCurrentUserFromAuthenticatedJwt() throws Exception {
+        Instant now = Instant.now();
+        Jwt jwt = new Jwt(
+                "test-token",
+                now,
+                now.plusSeconds(300),
+                Map.of("alg", "HS256"),
+                Map.of(
+                        "sub", "100",
+                        "username", "test_user",
+                        "role", "USER",
+                        "jti", "test-jti"
+                )
+        );
+        JwtAuthenticationToken authentication = new JwtAuthenticationToken(jwt, List.of(), "100");
+
+        mockMvc.perform(get("/api/auth/me").principal(authentication))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.id").value(100))
+                .andExpect(jsonPath("$.data.username").value("test_user"))
+                .andExpect(jsonPath("$.data.role").value("USER"))
+                .andExpect(jsonPath("$.data.accessToken").doesNotExist())
+                .andExpect(jsonPath("$.data.password").doesNotExist())
+                .andExpect(jsonPath("$.data.passwordHash").doesNotExist());
+
+        verifyNoInteractions(authService);
     }
 
     private static String validRequestJson() {

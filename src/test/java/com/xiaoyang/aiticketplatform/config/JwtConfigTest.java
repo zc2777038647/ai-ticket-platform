@@ -3,11 +3,19 @@ package com.xiaoyang.aiticketplatform.config;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.JwtValidationException;
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
+import org.springframework.security.oauth2.jwt.JwsHeader;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Base64;
+import java.util.UUID;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -34,9 +42,45 @@ class JwtConfigTest {
 
     @Test
     void shouldCreateJwtDecoder() {
-        JwtDecoder jwtDecoder = jwtConfig.jwtDecoder(jwtConfig.jwtSecretKey(validProperties()));
+        JwtDecoder jwtDecoder = jwtConfig.jwtDecoder(
+                jwtConfig.jwtSecretKey(validProperties()),
+                validProperties()
+        );
 
         assertNotNull(jwtDecoder);
+    }
+
+    @Test
+    void shouldDecodeTokenWithCorrectIssuerAndRequiredClaims() {
+        assertNotNull(decoder().decode(encode(claims -> { })));
+    }
+
+    @Test
+    void shouldRejectTokenWithWrongIssuer() {
+        assertThrows(JwtValidationException.class,
+                () -> decoder().decode(encode(claims -> claims.issuer("wrong-issuer"))));
+    }
+
+    @Test
+    void shouldRejectExpiredToken() {
+        Instant expiredAt = Instant.now().minusSeconds(120);
+        assertThrows(JwtValidationException.class,
+                () -> decoder().decode(encode(claims -> claims
+                        .issuedAt(expiredAt.minusSeconds(300))
+                        .expiresAt(expiredAt))));
+    }
+
+    @Test
+    void shouldRejectTokenMissingRequiredApplicationClaim() {
+        assertThrows(JwtValidationException.class,
+                () -> decoder().decode(encode(claims ->
+                        claims.claims(values -> values.remove("username")))));
+    }
+
+    @Test
+    void shouldRejectTokenWithUnknownRole() {
+        assertThrows(JwtValidationException.class,
+                () -> decoder().decode(encode(claims -> claims.claim("role", "UNKNOWN"))));
     }
 
     @Test
@@ -108,5 +152,29 @@ class JwtConfigTest {
         return Base64.getEncoder().encodeToString(
                 "test-only-256-bit-secret-value!!".getBytes(StandardCharsets.UTF_8)
         );
+    }
+
+    private JwtDecoder decoder() {
+        JwtProperties properties = validProperties();
+        return jwtConfig.jwtDecoder(jwtConfig.jwtSecretKey(properties), properties);
+    }
+
+    private String encode(Consumer<JwtClaimsSet.Builder> customization) {
+        JwtProperties properties = validProperties();
+        Instant now = Instant.now();
+        JwtClaimsSet.Builder claims = JwtClaimsSet.builder()
+                .issuer(properties.getIssuer())
+                .subject("100")
+                .issuedAt(now)
+                .expiresAt(now.plusSeconds(300))
+                .id(UUID.randomUUID().toString())
+                .claim("username", "test_user")
+                .claim("role", "USER");
+        customization.accept(claims);
+        JwtEncoder encoder = jwtConfig.jwtEncoder(jwtConfig.jwtSecretKey(properties));
+        return encoder.encode(JwtEncoderParameters.from(
+                JwsHeader.with(MacAlgorithm.HS256).type("JWT").build(),
+                claims.build()
+        )).getTokenValue();
     }
 }

@@ -38,7 +38,7 @@ class JwtTokenServiceImplTest {
         JwtProperties properties = testProperties();
         SecretKey secretKey = jwtConfig.jwtSecretKey(properties);
         JwtEncoder jwtEncoder = jwtConfig.jwtEncoder(secretKey);
-        jwtDecoder = jwtConfig.jwtDecoder(secretKey);
+        jwtDecoder = jwtConfig.jwtDecoder(secretKey, properties);
         fixedInstant = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         Clock fixedClock = Clock.fixed(fixedInstant, ZoneOffset.UTC);
         jwtTokenService = new JwtTokenServiceImpl(jwtEncoder, properties, fixedClock);
