@@ -48,6 +48,13 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.failure(ErrorCode.MESSAGE_NOT_READABLE));
     }
 
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException exception) {
+        LOGGER.warn("业务操作失败，错误码: {}", exception.getErrorCode().getCode());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.failure(exception.getErrorCode()));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleUnexpectedException(Exception exception) {
         LOGGER.error("未处理的服务器异常", exception);

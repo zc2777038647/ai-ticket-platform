@@ -1,0 +1,19 @@
+package com.xiaoyang.aiticketplatform.exception;
+
+import com.xiaoyang.aiticketplatform.common.ErrorCode;
+
+import java.util.Objects;
+
+public class BusinessException extends RuntimeException {
+
+    private final ErrorCode errorCode;
+
+    public BusinessException(ErrorCode errorCode) {
+        super(Objects.requireNonNull(errorCode, "errorCode 不能为空").getMessage());
+        this.errorCode = errorCode;
+    }
+
+    public ErrorCode getErrorCode() {
+        return errorCode;
+    }
+}

@@ -1,5 +1,6 @@
 package com.xiaoyang.aiticketplatform.exception;
 
+import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import jakarta.validation.Valid;
 import org.junit.jupiter.api.AfterEach;
@@ -112,6 +113,19 @@ class GlobalExceptionHandlerTest {
                 .andExpect(content().string(not(containsString("敏感内部错误"))));
     }
 
+    @Test
+    void shouldReturnNotFoundWithoutExposingExceptionInternals() throws Exception {
+        mockMvc.perform(get("/test/tickets/not-found"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(40400))
+                .andExpect(jsonPath("$.message").value("工单不存在"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("java.lang"))))
+                .andExpect(content().string(not(containsString("stackTrace"))))
+                .andExpect(content().string(not(containsString("敏感内部错误"))));
+    }
+
     private static String validRequestJson() {
         return """
                 {
@@ -134,6 +148,11 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/error")
         void throwUnexpectedException() {
             throw new IllegalStateException("敏感内部错误");
+        }
+
+        @GetMapping("/test/tickets/not-found")
+        void throwTicketNotFoundException() {
+            throw new BusinessException(ErrorCode.TICKET_NOT_FOUND);
         }
     }
 }

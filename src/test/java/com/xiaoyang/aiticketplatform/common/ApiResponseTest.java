@@ -24,4 +24,13 @@ class ApiResponseTest {
         assertEquals("服务器内部错误", response.message());
         assertNull(response.data());
     }
+
+    @Test
+    void shouldCreateTicketNotFoundResponseWithoutData() {
+        ApiResponse<Void> response = ApiResponse.failure(ErrorCode.TICKET_NOT_FOUND);
+
+        assertEquals(40400, response.code());
+        assertEquals("工单不存在", response.message());
+        assertNull(response.data());
+    }
 }
