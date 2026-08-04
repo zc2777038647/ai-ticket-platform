@@ -78,9 +78,17 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException exception) {
-        LOGGER.warn("业务操作失败，错误码: {}", exception.getErrorCode().getCode());
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(ApiResponse.failure(exception.getErrorCode()));
+        ErrorCode errorCode = exception.getErrorCode();
+        HttpStatus httpStatus = resolveBusinessHttpStatus(errorCode);
+        if (httpStatus == null) {
+            LOGGER.error("业务错误缺少 HTTP 状态映射，错误码: {}", errorCode.getCode());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.failure(ErrorCode.INTERNAL_ERROR));
+        }
+
+        LOGGER.warn("业务操作失败，错误码: {}", errorCode.getCode());
+        return ResponseEntity.status(httpStatus)
+                .body(ApiResponse.failure(errorCode));
     }
 
     @ExceptionHandler(Exception.class)
@@ -88,5 +96,13 @@ public class GlobalExceptionHandler {
         LOGGER.error("未处理的服务器异常", exception);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.failure(ErrorCode.INTERNAL_ERROR));
+    }
+
+    private HttpStatus resolveBusinessHttpStatus(ErrorCode errorCode) {
+        return switch (errorCode) {
+            case TICKET_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case INVALID_TICKET_STATUS_TRANSITION, TICKET_STATUS_CONFLICT -> HttpStatus.CONFLICT;
+            default -> null;
+        };
     }
 }

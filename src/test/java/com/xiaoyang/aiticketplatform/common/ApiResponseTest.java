@@ -2,6 +2,7 @@ package com.xiaoyang.aiticketplatform.common;
 
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -31,6 +32,29 @@ class ApiResponseTest {
 
         assertEquals(40400, response.code());
         assertEquals("工单不存在", response.message());
+        assertNull(response.data());
+    }
+
+    @Test
+    void shouldExposeTicketStatusBusinessErrorCodes() {
+        assertAll(
+                () -> assertErrorCode(
+                        ErrorCode.INVALID_TICKET_STATUS_TRANSITION,
+                        40900,
+                        "工单状态流转不合法"
+                ),
+                () -> assertErrorCode(
+                        ErrorCode.TICKET_STATUS_CONFLICT,
+                        40901,
+                        "工单状态已发生变化，请刷新后重试"
+                )
+        );
+    }
+
+    private static void assertErrorCode(ErrorCode errorCode, int code, String message) {
+        ApiResponse<Void> response = ApiResponse.failure(errorCode);
+        assertEquals(code, response.code());
+        assertEquals(message, response.message());
         assertNull(response.data());
     }
 }

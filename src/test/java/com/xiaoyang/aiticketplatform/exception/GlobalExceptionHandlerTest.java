@@ -138,6 +138,41 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldReturnConflictForInvalidTicketStatusTransition() throws Exception {
+        mockMvc.perform(get("/test/tickets/invalid-status-transition"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(40900))
+                .andExpect(jsonPath("$.message").value("工单状态流转不合法"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("java.lang"))))
+                .andExpect(content().string(not(containsString("stackTrace"))));
+    }
+
+    @Test
+    void shouldReturnConflictForConcurrentTicketStatusChange() throws Exception {
+        mockMvc.perform(get("/test/tickets/status-conflict"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(40901))
+                .andExpect(jsonPath("$.message").value("工单状态已发生变化，请刷新后重试"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("java.lang"))))
+                .andExpect(content().string(not(containsString("stackTrace"))));
+    }
+
+    @Test
+    void shouldSafelyHandleUnmappedBusinessErrorCode() throws Exception {
+        mockMvc.perform(get("/test/tickets/unmapped-business-error"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value(50000))
+                .andExpect(jsonPath("$.message").value("服务器内部错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("请求参数校验失败"))))
+                .andExpect(content().string(not(containsString("BusinessException"))));
+    }
+
+    @Test
     void shouldReturnValidationErrorForNonPositivePathVariable() throws Exception {
         mockMvc.perform(get("/test/ids/0"))
                 .andExpect(status().isBadRequest())
@@ -236,6 +271,21 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/tickets/not-found")
         void throwTicketNotFoundException() {
             throw new BusinessException(ErrorCode.TICKET_NOT_FOUND);
+        }
+
+        @GetMapping("/test/tickets/invalid-status-transition")
+        void throwInvalidStatusTransition() {
+            throw new BusinessException(ErrorCode.INVALID_TICKET_STATUS_TRANSITION);
+        }
+
+        @GetMapping("/test/tickets/status-conflict")
+        void throwTicketStatusConflict() {
+            throw new BusinessException(ErrorCode.TICKET_STATUS_CONFLICT);
+        }
+
+        @GetMapping("/test/tickets/unmapped-business-error")
+        void throwUnmappedBusinessError() {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR);
         }
 
         @GetMapping("/test/ids/{id}")
