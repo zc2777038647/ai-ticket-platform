@@ -154,6 +154,18 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldReturnForbiddenForAuthorizationDenied() throws Exception {
+        mockMvc.perform(get("/test/auth/authorization-denied"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(40300))
+                .andExpect(jsonPath("$.message").value("权限不足，无法执行此操作"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("ROLE_AGENT"))))
+                .andExpect(content().string(not(containsString("stackTrace"))));
+    }
+
+    @Test
     void shouldReturnConflictForInvalidTicketStatusTransition() throws Exception {
         mockMvc.perform(get("/test/tickets/invalid-status-transition"))
                 .andExpect(status().isConflict())
@@ -320,6 +332,11 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/auth/invalid-credentials")
         void throwInvalidCredentials() {
             throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
+        }
+
+        @GetMapping("/test/auth/authorization-denied")
+        void throwAuthorizationDenied() {
+            throw new BusinessException(ErrorCode.AUTHORIZATION_DENIED);
         }
 
         @GetMapping("/test/tickets/invalid-status-transition")

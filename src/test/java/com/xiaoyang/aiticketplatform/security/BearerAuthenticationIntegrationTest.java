@@ -162,12 +162,10 @@ class BearerAuthenticationIntegrationTest {
     }
 
     @Test
-    void shouldKeepTicketQueryAnonymousDuringMigrationStage() throws Exception {
-        mockMvc.perform(get("/api/tickets")
+    void shouldRequireBearerTokenForTicketQuery() throws Exception {
+        assertPublicUnauthorized(mockMvc.perform(get("/api/tickets")
                         .param("page", "1")
-                        .param("size", "1"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(0));
+                        .param("size", "1")));
     }
 
     private void assertPublicUnauthorized(ResultActions resultActions) throws Exception {

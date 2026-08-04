@@ -45,6 +45,15 @@ class ApiResponseTest {
     }
 
     @Test
+    void shouldExposeAuthorizationDeniedErrorCode() {
+        assertErrorCode(
+                ErrorCode.AUTHORIZATION_DENIED,
+                40300,
+                "权限不足，无法执行此操作"
+        );
+    }
+
+    @Test
     void shouldExposeTicketStatusBusinessErrorCodes() {
         assertAll(
                 () -> assertErrorCode(
