@@ -1,7 +1,9 @@
 package com.xiaoyang.aiticketplatform.controller;
 
 import com.xiaoyang.aiticketplatform.common.ApiResponse;
+import com.xiaoyang.aiticketplatform.dto.request.LoginRequest;
 import com.xiaoyang.aiticketplatform.dto.request.RegisterRequest;
+import com.xiaoyang.aiticketplatform.dto.response.LoginResponse;
 import com.xiaoyang.aiticketplatform.dto.response.UserResponse;
 import com.xiaoyang.aiticketplatform.service.AuthService;
 import jakarta.validation.Valid;
@@ -29,5 +31,13 @@ public class AuthController {
         UserResponse userResponse = authService.register(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success(userResponse));
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<ApiResponse<LoginResponse>> login(
+            @Valid @RequestBody LoginRequest request
+    ) {
+        LoginResponse loginResponse = authService.login(request);
+        return ResponseEntity.ok(ApiResponse.success(loginResponse));
     }
 }

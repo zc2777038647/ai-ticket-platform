@@ -141,6 +141,19 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldReturnUnauthorizedForInvalidCredentials() throws Exception {
+        mockMvc.perform(get("/test/auth/invalid-credentials"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(40100))
+                .andExpect(jsonPath("$.message").value("用户名或密码错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("用户不存在"))))
+                .andExpect(content().string(not(containsString("密码不正确"))))
+                .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("stackTrace"))));
+    }
+
+    @Test
     void shouldReturnConflictForInvalidTicketStatusTransition() throws Exception {
         mockMvc.perform(get("/test/tickets/invalid-status-transition"))
                 .andExpect(status().isConflict())
@@ -302,6 +315,11 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/tickets/not-found")
         void throwTicketNotFoundException() {
             throw new BusinessException(ErrorCode.TICKET_NOT_FOUND);
+        }
+
+        @GetMapping("/test/auth/invalid-credentials")
+        void throwInvalidCredentials() {
+            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
         }
 
         @GetMapping("/test/tickets/invalid-status-transition")

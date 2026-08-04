@@ -1,7 +1,9 @@
 package com.xiaoyang.aiticketplatform.controller;
 
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
+import com.xiaoyang.aiticketplatform.dto.request.LoginRequest;
 import com.xiaoyang.aiticketplatform.dto.request.RegisterRequest;
+import com.xiaoyang.aiticketplatform.dto.response.LoginResponse;
 import com.xiaoyang.aiticketplatform.dto.response.UserResponse;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
@@ -150,8 +152,108 @@ class AuthControllerTest {
         verifyNoMoreInteractions(authService);
     }
 
+    @Test
+    void shouldLoginUserAndReturnAccessToken() throws Exception {
+        LoginResponse serviceResponse = new LoginResponse(
+                "test.jwt.token",
+                "Bearer",
+                7200L,
+                new UserResponse(100L, "test_user", "测试用户", UserRole.USER)
+        );
+        when(authService.login(any(LoginRequest.class))).thenReturn(serviceResponse);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validLoginRequestJson()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.message").value("success"))
+                .andExpect(jsonPath("$.data.accessToken").isNotEmpty())
+                .andExpect(jsonPath("$.data.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.data.expiresIn").value(7200))
+                .andExpect(jsonPath("$.data.user.id").value(100))
+                .andExpect(jsonPath("$.data.user.username").value("test_user"))
+                .andExpect(jsonPath("$.data.user.role").value("USER"))
+                .andExpect(jsonPath("$.data.password").doesNotExist())
+                .andExpect(jsonPath("$.data.passwordHash").doesNotExist())
+                .andExpect(jsonPath("$.data.secretKey").doesNotExist());
+
+        verify(authService, times(1)).login(any(LoginRequest.class));
+        verifyNoMoreInteractions(authService);
+    }
+
+    @Test
+    void shouldRejectBlankLoginUsernameWithoutCallingService() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginRequestJson("   ", "test-secret")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.data.username").value("用户名不能为空"));
+
+        verifyNoInteractions(authService);
+    }
+
+    @Test
+    void shouldRejectBlankLoginPasswordWithoutCallingService() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginRequestJson("test_user", "")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.data.password").value("密码不能为空"));
+
+        verifyNoInteractions(authService);
+    }
+
+    @Test
+    void shouldReturnMessageNotReadableForMalformedLoginJson() throws Exception {
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"test_user\""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40001))
+                .andExpect(jsonPath("$.message").value("请求体格式错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verifyNoInteractions(authService);
+    }
+
+    @Test
+    void shouldReturnUnauthorizedForInvalidCredentials() throws Exception {
+        when(authService.login(any(LoginRequest.class)))
+                .thenThrow(new BusinessException(ErrorCode.INVALID_CREDENTIALS));
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validLoginRequestJson()))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(40100))
+                .andExpect(jsonPath("$.message").value("用户名或密码错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("用户不存在"))))
+                .andExpect(content().string(not(containsString("密码不正确"))))
+                .andExpect(content().string(not(containsString("BusinessException"))));
+
+        verify(authService, times(1)).login(any(LoginRequest.class));
+        verifyNoMoreInteractions(authService);
+    }
+
     private static String validRequestJson() {
         return requestJson("Test_User", "P5_2_test_secret_value", " 测试用户 ");
+    }
+
+    private static String validLoginRequestJson() {
+        return loginRequestJson("Test_User", "test-secret");
+    }
+
+    private static String loginRequestJson(String username, String password) {
+        return """
+                {
+                  "username": "%s",
+                  "password": "%s"
+                }
+                """.formatted(username, password);
     }
 
     private static String requestJson(String username, String password, String displayName) {

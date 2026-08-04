@@ -17,3 +17,10 @@ management:
   endpoint:
     health:
       show-details: always
+
+app:
+  security:
+    jwt:
+      issuer: ai-ticket-platform
+      access-token-ttl: PT2H
+      secret-base64: ${JWT_SECRET_BASE64}

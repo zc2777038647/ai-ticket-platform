@@ -36,6 +36,15 @@ class ApiResponseTest {
     }
 
     @Test
+    void shouldExposeInvalidCredentialsErrorCode() {
+        assertErrorCode(
+                ErrorCode.INVALID_CREDENTIALS,
+                40100,
+                "用户名或密码错误"
+        );
+    }
+
+    @Test
     void shouldExposeTicketStatusBusinessErrorCodes() {
         assertAll(
                 () -> assertErrorCode(

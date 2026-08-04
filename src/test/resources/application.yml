@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: ai-ticket-platform
+  profiles:
+    default: local
+
+app:
+  security:
+    jwt:
+      issuer: ai-ticket-platform
+      access-token-ttl: PT2H
+      secret-base64: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=

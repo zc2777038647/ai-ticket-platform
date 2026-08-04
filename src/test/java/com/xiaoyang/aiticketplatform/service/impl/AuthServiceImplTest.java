@@ -4,12 +4,16 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
+import com.xiaoyang.aiticketplatform.dto.request.LoginRequest;
 import com.xiaoyang.aiticketplatform.dto.request.RegisterRequest;
+import com.xiaoyang.aiticketplatform.dto.response.LoginResponse;
 import com.xiaoyang.aiticketplatform.dto.response.UserResponse;
 import com.xiaoyang.aiticketplatform.entity.UserAccount;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.UserAccountMapper;
+import com.xiaoyang.aiticketplatform.security.IssuedAccessToken;
+import com.xiaoyang.aiticketplatform.service.JwtTokenService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -20,6 +24,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
+
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -53,6 +59,9 @@ class AuthServiceImplTest {
 
     @Mock
     private PasswordEncoder passwordEncoder;
+
+    @Mock
+    private JwtTokenService jwtTokenService;
 
     @InjectMocks
     private AuthServiceImpl authService;
@@ -167,11 +176,124 @@ class AuthServiceImplTest {
         verifyNoMoreInteractions(userAccountMapper, passwordEncoder);
     }
 
+    @Test
+    void shouldLoginWithNormalizedUsernameAndReturnAccessToken() {
+        LoginRequest request = new LoginRequest("Test_User", " raw-test-secret ");
+        UserAccount userAccount = existingUser();
+        IssuedAccessToken issuedToken = issuedToken();
+        when(userAccountMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(userAccount);
+        when(passwordEncoder.matches(request.password(), TEST_HASH)).thenReturn(true);
+        when(jwtTokenService.issueAccessToken(userAccount)).thenReturn(issuedToken);
+
+        LoginResponse response = authService.login(request);
+
+        ArgumentCaptor<LambdaQueryWrapper<UserAccount>> wrapperCaptor = ArgumentCaptor.forClass(
+                LambdaQueryWrapper.class
+        );
+        verify(userAccountMapper, times(1)).selectOne(wrapperCaptor.capture());
+        verify(passwordEncoder, times(1)).matches(request.password(), TEST_HASH);
+        verify(jwtTokenService, times(1)).issueAccessToken(userAccount);
+        verify(userAccountMapper, never()).insert(any(UserAccount.class));
+        verify(passwordEncoder, never()).encode(anyString());
+        verifyNoMoreInteractions(userAccountMapper, passwordEncoder, jwtTokenService);
+
+        LambdaQueryWrapper<UserAccount> queryWrapper = wrapperCaptor.getValue();
+        queryWrapper.getSqlSegment();
+        assertAll(
+                () -> assertTrue(queryWrapper.getParamNameValuePairs().containsValue("test_user")),
+                () -> assertTrue(issuedToken.tokenValue().equals(response.accessToken()),
+                        "登录响应应包含签发的 Access Token"),
+                () -> assertEquals("Bearer", response.tokenType()),
+                () -> assertEquals(7200L, response.expiresIn()),
+                () -> assertEquals(100L, response.user().id()),
+                () -> assertEquals("test_user", response.user().username()),
+                () -> assertEquals("测试用户", response.user().displayName()),
+                () -> assertEquals(UserRole.USER, response.user().role())
+        );
+    }
+
+    @Test
+    void shouldRejectLoginWhenUserDoesNotExist() {
+        when(userAccountMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> authService.login(new LoginRequest("Missing_User", " raw-test-secret "))
+        );
+
+        assertEquals(ErrorCode.INVALID_CREDENTIALS, exception.getErrorCode());
+        verify(userAccountMapper, times(1)).selectOne(any(LambdaQueryWrapper.class));
+        verify(userAccountMapper, never()).insert(any(UserAccount.class));
+        verifyNoMoreInteractions(userAccountMapper);
+        verifyNoInteractions(passwordEncoder, jwtTokenService);
+    }
+
+    @Test
+    void shouldRejectLoginWhenPasswordDoesNotMatch() {
+        LoginRequest request = new LoginRequest("Test_User", " wrong-test-secret ");
+        UserAccount userAccount = existingUser();
+        when(userAccountMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(userAccount);
+        when(passwordEncoder.matches(request.password(), TEST_HASH)).thenReturn(false);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> authService.login(request)
+        );
+
+        assertEquals(ErrorCode.INVALID_CREDENTIALS, exception.getErrorCode());
+        verify(userAccountMapper, times(1)).selectOne(any(LambdaQueryWrapper.class));
+        verify(passwordEncoder, times(1)).matches(request.password(), TEST_HASH);
+        verify(passwordEncoder, never()).encode(anyString());
+        verify(userAccountMapper, never()).insert(any(UserAccount.class));
+        verifyNoMoreInteractions(userAccountMapper, passwordEncoder);
+        verifyNoInteractions(jwtTokenService);
+    }
+
+    @Test
+    void shouldPropagateTokenIssuanceSystemFailure() {
+        LoginRequest request = new LoginRequest("Test_User", " raw-test-secret ");
+        UserAccount userAccount = existingUser();
+        when(userAccountMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(userAccount);
+        when(passwordEncoder.matches(request.password(), TEST_HASH)).thenReturn(true);
+        when(jwtTokenService.issueAccessToken(userAccount))
+                .thenThrow(new IllegalStateException("token encoding failed"));
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> authService.login(request)
+        );
+
+        assertEquals("token encoding failed", exception.getMessage());
+        verify(userAccountMapper, times(1)).selectOne(any(LambdaQueryWrapper.class));
+        verify(passwordEncoder, times(1)).matches(request.password(), TEST_HASH);
+        verify(jwtTokenService, times(1)).issueAccessToken(userAccount);
+        verifyNoMoreInteractions(userAccountMapper, passwordEncoder, jwtTokenService);
+    }
+
     private static RegisterRequest validRequest() {
         return new RegisterRequest(
                 "Test_User",
                 "P5_2_test_secret_value",
                 " 测试用户 "
+        );
+    }
+
+    private static UserAccount existingUser() {
+        UserAccount userAccount = new UserAccount();
+        userAccount.setId(100L);
+        userAccount.setUsername("test_user");
+        userAccount.setPasswordHash(TEST_HASH);
+        userAccount.setDisplayName("测试用户");
+        userAccount.setRole(UserRole.USER);
+        return userAccount;
+    }
+
+    private static IssuedAccessToken issuedToken() {
+        Instant issuedAt = Instant.parse("2026-08-04T12:00:00Z");
+        return new IssuedAccessToken(
+                "test.jwt.token",
+                issuedAt,
+                issuedAt.plusSeconds(7200)
         );
     }
 }
