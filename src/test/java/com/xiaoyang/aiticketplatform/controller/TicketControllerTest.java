@@ -8,6 +8,7 @@ import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
+import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.exception.GlobalExceptionHandler;
 import com.xiaoyang.aiticketplatform.service.TicketService;
@@ -163,9 +164,9 @@ class TicketControllerTest {
                 TicketPriority.HIGH,
                 TicketStatus.OPEN
         );
-        when(ticketService.getTicketById(100L)).thenReturn(serviceResponse);
+        when(ticketService.getTicketById(100L, 100L, UserRole.USER)).thenReturn(serviceResponse);
 
-        mockMvc.perform(get("/api/tickets/100"))
+        mockMvc.perform(get("/api/tickets/100").principal(authentication()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.message").value("success"))
@@ -176,17 +177,17 @@ class TicketControllerTest {
                 .andExpect(jsonPath("$.data.priority").value("HIGH"))
                 .andExpect(jsonPath("$.data.status").value("OPEN"));
 
-        verify(ticketService, times(1)).getTicketById(100L);
+        verify(ticketService, times(1)).getTicketById(100L, 100L, UserRole.USER);
         verify(ticketService, never()).createTicket(any(CreateTicketRequest.class), any(Long.class));
         verifyNoMoreInteractions(ticketService);
     }
 
     @Test
     void shouldReturnNotFoundWhenTicketDoesNotExist() throws Exception {
-        when(ticketService.getTicketById(999L))
+        when(ticketService.getTicketById(999L, 100L, UserRole.USER))
                 .thenThrow(new BusinessException(ErrorCode.TICKET_NOT_FOUND));
 
-        mockMvc.perform(get("/api/tickets/999"))
+        mockMvc.perform(get("/api/tickets/999").principal(authentication()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(40400))
                 .andExpect(jsonPath("$.message").value("工单不存在"))
@@ -194,14 +195,14 @@ class TicketControllerTest {
                 .andExpect(content().string(not(containsString("BusinessException"))))
                 .andExpect(content().string(not(containsString("stackTrace"))));
 
-        verify(ticketService, times(1)).getTicketById(999L);
+        verify(ticketService, times(1)).getTicketById(999L, 100L, UserRole.USER);
         verify(ticketService, never()).createTicket(any(CreateTicketRequest.class), any(Long.class));
         verifyNoMoreInteractions(ticketService);
     }
 
     @Test
     void shouldRejectNonPositiveIdWithoutCallingService() throws Exception {
-        mockMvc.perform(get("/api/tickets/0"))
+        mockMvc.perform(get("/api/tickets/0").principal(authentication()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40000))
                 .andExpect(jsonPath("$.message").value("请求参数校验失败"))
@@ -212,11 +213,68 @@ class TicketControllerTest {
 
     @Test
     void shouldRejectNonNumericIdWithoutCallingService() throws Exception {
-        mockMvc.perform(get("/api/tickets/abc"))
+        mockMvc.perform(get("/api/tickets/abc").principal(authentication()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40002))
                 .andExpect(jsonPath("$.message").value("请求参数格式错误"))
                 .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldPassAgentIdentityAndRoleWhenGettingTicketDetails() throws Exception {
+        TicketResponse serviceResponse = new TicketResponse(
+                100L,
+                "查询测试工单",
+                "查询测试描述",
+                "查询测试用户",
+                TicketPriority.HIGH,
+                TicketStatus.OPEN
+        );
+        when(ticketService.getTicketById(100L, 100L, UserRole.AGENT)).thenReturn(serviceResponse);
+
+        mockMvc.perform(get("/api/tickets/100")
+                        .principal(authentication(UserRole.AGENT)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0));
+
+        verify(ticketService).getTicketById(100L, 100L, UserRole.AGENT);
+        verifyNoMoreInteractions(ticketService);
+    }
+
+    @Test
+    void shouldPageMyTicketsWithAuthenticatedUserId() throws Exception {
+        PageResponse<TicketResponse> serviceResponse = new PageResponse<>(List.of(), 0, 0, 1, 20);
+        when(ticketService.pageMyTickets(any(TicketPageQuery.class), eq(100L)))
+                .thenReturn(serviceResponse);
+
+        mockMvc.perform(get("/api/tickets/mine")
+                        .principal(authentication())
+                        .param("page", "1")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.message").value("success"))
+                .andExpect(jsonPath("$.data.records").isEmpty());
+
+        ArgumentCaptor<TicketPageQuery> queryCaptor = ArgumentCaptor.forClass(TicketPageQuery.class);
+        verify(ticketService).pageMyTickets(queryCaptor.capture(), eq(100L));
+        verifyNoMoreInteractions(ticketService);
+        assertAll(
+                () -> assertEquals(1, queryCaptor.getValue().page()),
+                () -> assertEquals(20, queryCaptor.getValue().size())
+        );
+    }
+
+    @Test
+    void shouldRejectInvalidMyTicketsPageWithoutCallingService() throws Exception {
+        mockMvc.perform(get("/api/tickets/mine")
+                        .principal(authentication())
+                        .param("page", "0"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"));
 
         verifyNoInteractions(ticketService);
     }
@@ -373,7 +431,7 @@ class TicketControllerTest {
         );
         verify(ticketService, times(1)).updateTicketStatus(eq(100L), requestCaptor.capture());
         verify(ticketService, never()).createTicket(any(CreateTicketRequest.class), any(Long.class));
-        verify(ticketService, never()).getTicketById(any());
+        verify(ticketService, never()).getTicketById(any(), any(), any());
         verify(ticketService, never()).pageTickets(any(TicketPageQuery.class));
         verifyNoMoreInteractions(ticketService);
         assertEquals(TicketStatus.IN_PROGRESS, requestCaptor.getValue().status());
@@ -501,6 +559,10 @@ class TicketControllerTest {
     }
 
     private static JwtAuthenticationToken authentication() {
+        return authentication(UserRole.USER);
+    }
+
+    private static JwtAuthenticationToken authentication(UserRole role) {
         Instant now = Instant.now();
         Jwt jwt = new Jwt(
                 "test-token",
@@ -510,7 +572,7 @@ class TicketControllerTest {
                 Map.of(
                         "sub", "100",
                         "username", "test_user",
-                        "role", "USER",
+                        "role", role.name(),
                         "jti", UUID.randomUUID().toString()
                 )
         );

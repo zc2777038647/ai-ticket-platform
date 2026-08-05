@@ -6,6 +6,7 @@ import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
 import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
+import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.service.TicketService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
@@ -42,11 +43,28 @@ public class TicketController {
                 .body(ApiResponse.success(ticketResponse));
     }
 
+    @GetMapping("/mine")
+    public ResponseEntity<ApiResponse<PageResponse<TicketResponse>>> pageMyTickets(
+            @Valid @ModelAttribute TicketPageQuery query,
+            JwtAuthenticationToken authentication
+    ) {
+        PageResponse<TicketResponse> pageResponse = ticketService.pageMyTickets(
+                query,
+                currentUserId(authentication)
+        );
+        return ResponseEntity.ok(ApiResponse.success(pageResponse));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<TicketResponse>> getTicketById(
-            @PathVariable @Positive(message = "工单ID必须为正数") Long id
+            @PathVariable @Positive(message = "工单ID必须为正数") Long id,
+            JwtAuthenticationToken authentication
     ) {
-        TicketResponse ticketResponse = ticketService.getTicketById(id);
+        TicketResponse ticketResponse = ticketService.getTicketById(
+                id,
+                currentUserId(authentication),
+                currentUserRole(authentication)
+        );
         return ResponseEntity.ok(ApiResponse.success(ticketResponse));
     }
 
@@ -65,5 +83,13 @@ public class TicketController {
     ) {
         TicketResponse ticketResponse = ticketService.updateTicketStatus(id, request);
         return ResponseEntity.ok(ApiResponse.success(ticketResponse));
+    }
+
+    private Long currentUserId(JwtAuthenticationToken authentication) {
+        return Long.valueOf(authentication.getName());
+    }
+
+    private UserRole currentUserRole(JwtAuthenticationToken authentication) {
+        return UserRole.valueOf(authentication.getToken().getClaimAsString("role"));
     }
 }

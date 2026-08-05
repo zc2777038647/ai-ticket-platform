@@ -12,6 +12,7 @@ import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
+import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
 import com.xiaoyang.aiticketplatform.service.TicketService;
@@ -58,8 +59,15 @@ public class TicketServiceImpl implements TicketService {
 
     @Override
     @Transactional(readOnly = true)
-    public TicketResponse getTicketById(Long id) {
-        Ticket ticket = ticketMapper.selectById(id);
+    public TicketResponse getTicketById(Long id, Long requesterUserId, UserRole requesterRole) {
+        validateRequester(requesterUserId, requesterRole);
+
+        Ticket ticket = switch (requesterRole) {
+            case USER -> ticketMapper.selectOne(new LambdaQueryWrapper<Ticket>()
+                    .eq(Ticket::getId, id)
+                    .eq(Ticket::getCreatorUserId, requesterUserId));
+            case AGENT, ADMIN -> ticketMapper.selectById(id);
+        };
         if (ticket == null) {
             throw new BusinessException(ErrorCode.TICKET_NOT_FOUND);
         }
@@ -70,9 +78,23 @@ public class TicketServiceImpl implements TicketService {
     @Override
     @Transactional(readOnly = true)
     public PageResponse<TicketResponse> pageTickets(TicketPageQuery query) {
+        return queryTickets(query, null);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse<TicketResponse> pageMyTickets(TicketPageQuery query, Long creatorUserId) {
+        if (creatorUserId == null || creatorUserId <= 0) {
+            throw new IllegalArgumentException("creatorUserId 必须为正数");
+        }
+        return queryTickets(query, creatorUserId);
+    }
+
+    private PageResponse<TicketResponse> queryTickets(TicketPageQuery query, Long creatorUserId) {
         Page<Ticket> page = new Page<>(query.page(), query.size());
         LambdaQueryWrapper<Ticket> wrapper = new LambdaQueryWrapper<>();
 
+        wrapper.eq(creatorUserId != null, Ticket::getCreatorUserId, creatorUserId);
         wrapper.eq(query.status() != null, Ticket::getStatus, query.status());
         wrapper.eq(query.priority() != null, Ticket::getPriority, query.priority());
 
@@ -102,6 +124,15 @@ public class TicketServiceImpl implements TicketService {
                 result.getCurrent(),
                 result.getSize()
         );
+    }
+
+    private void validateRequester(Long requesterUserId, UserRole requesterRole) {
+        if (requesterUserId == null || requesterUserId <= 0) {
+            throw new IllegalArgumentException("requesterUserId 必须为正数");
+        }
+        if (requesterRole == null) {
+            throw new IllegalArgumentException("requesterRole 不能为空");
+        }
     }
 
     @Override

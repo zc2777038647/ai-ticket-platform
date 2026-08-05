@@ -149,12 +149,33 @@ class TicketAuthorizationIntegrationTest {
     }
 
     @Test
-    void shouldForbidUserFromTicketDetailsWithoutLeakingTicket() throws Exception {
-        Ticket ticket = insertTicket(TicketStatus.OPEN);
+    void shouldAllowUserToReadOwnTicketDetails() throws Exception {
         String token = loginToken(UserRole.USER);
+        String creatorName = prefix() + "own-details";
+        MvcResult creationResult = mockMvc.perform(post("/api/tickets")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createTicketJson(creatorName)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        Number ticketId = JsonPath.read(creationResult.getResponse().getContentAsString(), "$.data.id");
+        Ticket ticket = ticketMapper.selectById(ticketId.longValue());
 
-        assertForbidden(mockMvc.perform(get("/api/tickets/{id}", ticket.getId())
-                        .header(HttpHeaders.AUTHORIZATION, bearer(token))))
+        assertTicketDetailsAllowed(token, ticket);
+    }
+
+    @Test
+    void shouldHideAnotherUsersTicketDetailsFromUser() throws Exception {
+        String token = loginToken(UserRole.USER);
+        UserAccount otherUser = insertUser(UserRole.USER, "details-owner");
+        Ticket ticket = insertTicket(TicketStatus.OPEN, otherUser.getId());
+
+        mockMvc.perform(get("/api/tickets/{id}", ticket.getId())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(token)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(40400))
+                .andExpect(jsonPath("$.message").value("工单不存在"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
                 .andExpect(content().string(not(containsString(ticket.getTitle()))))
                 .andExpect(content().string(not(containsString(ticket.getCreatorName()))));
     }
@@ -329,10 +350,15 @@ class TicketAuthorizationIntegrationTest {
     }
 
     private Ticket insertTicket(TicketStatus status) {
+        return insertTicket(status, null);
+    }
+
+    private Ticket insertTicket(TicketStatus status, Long creatorUserId) {
         Ticket ticket = new Ticket();
         ticket.setTitle(prefix() + "ticket");
         ticket.setDescription("角色授权集成测试描述");
         ticket.setCreatorName(prefix() + "creator");
+        ticket.setCreatorUserId(creatorUserId);
         ticket.setPriority(TicketPriority.HIGH);
         ticket.setStatus(status);
         assertEquals(1, ticketMapper.insert(ticket));

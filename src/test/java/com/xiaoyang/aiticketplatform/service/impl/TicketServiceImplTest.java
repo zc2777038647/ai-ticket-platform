@@ -14,6 +14,7 @@ import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
+import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -172,17 +173,26 @@ class TicketServiceImplTest {
     }
 
     @Test
-    void shouldReturnTicketResponseWhenTicketExists() {
+    void shouldReturnOwnedTicketForUserWithSingleConditionalQuery() {
         Ticket ticket = existingTicket();
-        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        ticket.setCreatorUserId(101L);
+        when(ticketMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(ticket);
 
-        TicketResponse response = ticketService.getTicketById(100L);
+        TicketResponse response = ticketService.getTicketById(100L, 101L, UserRole.USER);
 
-        verify(ticketMapper, times(1)).selectById(100L);
-        verify(ticketMapper, never()).insert(any(Ticket.class));
+        ArgumentCaptor<LambdaQueryWrapper<Ticket>> wrapperCaptor = ArgumentCaptor.forClass(
+                LambdaQueryWrapper.class
+        );
+        verify(ticketMapper, times(1)).selectOne(wrapperCaptor.capture());
+        verify(ticketMapper, never()).selectById(any());
         verifyNoMoreInteractions(ticketMapper);
+        LambdaQueryWrapper<Ticket> wrapper = wrapperCaptor.getValue();
         assertNotNull(response);
         assertAll(
+                () -> assertTrue(wrapper.getSqlSegment().contains("id")),
+                () -> assertTrue(wrapper.getSqlSegment().contains("creator_user_id")),
+                () -> assertTrue(wrapper.getParamNameValuePairs().containsValue(100L)),
+                () -> assertTrue(wrapper.getParamNameValuePairs().containsValue(101L)),
                 () -> assertEquals(100L, response.id()),
                 () -> assertEquals("查询测试工单", response.title()),
                 () -> assertEquals("查询测试描述", response.description()),
@@ -193,18 +203,105 @@ class TicketServiceImplTest {
     }
 
     @Test
-    void shouldThrowBusinessExceptionWhenTicketDoesNotExist() {
-        when(ticketMapper.selectById(999L)).thenReturn(null);
+    void shouldHideAnotherUsersTicketFromUser() {
+        when(ticketMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> ticketService.getTicketById(999L)
+                () -> ticketService.getTicketById(999L, 101L, UserRole.USER)
         );
 
         assertEquals(ErrorCode.TICKET_NOT_FOUND, exception.getErrorCode());
         assertEquals("工单不存在", exception.getMessage());
-        verify(ticketMapper, times(1)).selectById(999L);
-        verify(ticketMapper, never()).insert(any(Ticket.class));
+        verify(ticketMapper, times(1)).selectOne(any(LambdaQueryWrapper.class));
+        verify(ticketMapper, never()).selectById(any());
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @Test
+    void shouldAllowAgentToReadAnyExistingTicket() {
+        Ticket ticket = existingTicket();
+        ticket.setCreatorUserId(101L);
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+
+        TicketResponse response = ticketService.getTicketById(100L, 200L, UserRole.AGENT);
+
+        assertEquals(100L, response.id());
+        verify(ticketMapper).selectById(100L);
+        verify(ticketMapper, never()).selectOne(any(LambdaQueryWrapper.class));
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @Test
+    void shouldAllowAdminToReadAnyExistingTicket() {
+        Ticket ticket = existingTicket();
+        ticket.setCreatorUserId(null);
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+
+        TicketResponse response = ticketService.getTicketById(100L, 300L, UserRole.ADMIN);
+
+        assertEquals(100L, response.id());
+        verify(ticketMapper).selectById(100L);
+        verify(ticketMapper, never()).selectOne(any(LambdaQueryWrapper.class));
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @Test
+    void shouldReturnNotFoundForMissingTicketOnAgentPath() {
+        when(ticketMapper.selectById(999L)).thenReturn(null);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.getTicketById(999L, 200L, UserRole.AGENT)
+        );
+
+        assertEquals(ErrorCode.TICKET_NOT_FOUND, exception.getErrorCode());
+        verify(ticketMapper).selectById(999L);
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @Test
+    void shouldReturnNotFoundForMissingTicketOnUserPath() {
+        when(ticketMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(null);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.getTicketById(999L, 101L, UserRole.USER)
+        );
+
+        assertEquals(ErrorCode.TICKET_NOT_FOUND, exception.getErrorCode());
+        verify(ticketMapper).selectOne(any(LambdaQueryWrapper.class));
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @Test
+    void shouldRejectNullRequesterUserIdWithoutCallingMapper() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.getTicketById(100L, null, UserRole.USER)
+        );
+
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, -1L})
+    void shouldRejectNonPositiveRequesterUserIdWithoutCallingMapper(long requesterUserId) {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.getTicketById(100L, requesterUserId, UserRole.USER)
+        );
+
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @Test
+    void shouldRejectNullRequesterRoleWithoutCallingMapper() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.getTicketById(100L, 101L, null)
+        );
+
         verifyNoMoreInteractions(ticketMapper);
     }
 
@@ -288,6 +385,74 @@ class TicketServiceImplTest {
                 () -> assertEquals(3L, response.current()),
                 () -> assertEquals(20L, response.size())
         );
+    }
+
+    @Test
+    void shouldPageOnlyCurrentUsersTickets() {
+        TicketPageQuery query = new TicketPageQuery(
+                1,
+                20,
+                TicketStatus.OPEN,
+                TicketPriority.HIGH,
+                " 测试用户 ",
+                " 登录 "
+        );
+        Page<Ticket> mapperPage = new Page<>(1, 20);
+        mapperPage.setTotal(1);
+        Ticket ownedTicket = existingTicket();
+        ownedTicket.setCreatorUserId(101L);
+        mapperPage.setRecords(List.of(ownedTicket));
+        when(ticketMapper.selectPage(any(Page.class), any(LambdaQueryWrapper.class)))
+                .thenReturn(mapperPage);
+
+        PageResponse<TicketResponse> response = ticketService.pageMyTickets(query, 101L);
+
+        ArgumentCaptor<Page<Ticket>> pageCaptor = ArgumentCaptor.forClass(Page.class);
+        ArgumentCaptor<LambdaQueryWrapper<Ticket>> wrapperCaptor = ArgumentCaptor.forClass(
+                LambdaQueryWrapper.class
+        );
+        verify(ticketMapper).selectPage(pageCaptor.capture(), wrapperCaptor.capture());
+        verifyNoMoreInteractions(ticketMapper);
+        assertAll(
+                () -> assertEquals(1L, pageCaptor.getValue().getCurrent()),
+                () -> assertEquals(20L, pageCaptor.getValue().getSize()),
+                () -> assertEquals(1L, response.total()),
+                () -> assertEquals(1, response.records().size()),
+                () -> assertEquals(100L, response.records().getFirst().id()),
+                () -> assertFalse(Arrays.stream(TicketResponse.class.getRecordComponents())
+                        .anyMatch(component -> component.getName().equals("creatorUserId"))),
+                () -> assertTrue(wrapperCaptor.getValue().getSqlSegment().contains("creator_user_id")),
+                () -> assertTrue(wrapperCaptor.getValue().getSqlSegment().contains("title")),
+                () -> assertTrue(wrapperCaptor.getValue().getSqlSegment().contains("description")),
+                () -> assertTrue(wrapperCaptor.getValue().getParamNameValuePairs().containsValue(101L))
+        );
+    }
+
+    @Test
+    void shouldRejectNullCreatorUserIdForMyTicketsWithoutCallingMapper() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.pageMyTickets(
+                        new TicketPageQuery(null, null, null, null, null, null),
+                        null
+                )
+        );
+
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, -1L})
+    void shouldRejectNonPositiveCreatorUserIdForMyTicketsWithoutCallingMapper(long creatorUserId) {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.pageMyTickets(
+                        new TicketPageQuery(null, null, null, null, null, null),
+                        creatorUserId
+                )
+        );
+
+        verifyNoMoreInteractions(ticketMapper);
     }
 
     @Test

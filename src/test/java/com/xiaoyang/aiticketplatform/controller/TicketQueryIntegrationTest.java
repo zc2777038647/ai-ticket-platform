@@ -9,12 +9,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.transaction.AfterTransaction;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.nullValue;
@@ -69,7 +74,7 @@ class TicketQueryIntegrationTest {
         assertTrue(ticket.getId() > 0);
         assertEquals(countBeforePreparation + 1, countTickets());
 
-        mockMvc.perform(get("/api/tickets/{id}", ticket.getId()))
+        mockMvc.perform(get("/api/tickets/{id}", ticket.getId()).principal(agentAuthentication()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.message").value("success"))
@@ -91,7 +96,8 @@ class TicketQueryIntegrationTest {
         assertNull(ticketMapper.selectById(MISSING_TICKET_ID));
         long countBeforeRequest = countTickets();
 
-        mockMvc.perform(get("/api/tickets/{id}", MISSING_TICKET_ID))
+        mockMvc.perform(get("/api/tickets/{id}", MISSING_TICKET_ID)
+                        .principal(agentAuthentication()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(40400))
                 .andExpect(jsonPath("$.message").value("工单不存在"))
@@ -104,7 +110,7 @@ class TicketQueryIntegrationTest {
     void shouldRejectZeroIdWithoutChangingDatabase() throws Exception {
         long countBeforeRequest = countTickets();
 
-        mockMvc.perform(get("/api/tickets/0"))
+        mockMvc.perform(get("/api/tickets/0").principal(agentAuthentication()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40000))
                 .andExpect(jsonPath("$.message").value("请求参数校验失败"));
@@ -116,7 +122,7 @@ class TicketQueryIntegrationTest {
     void shouldRejectNonNumericIdWithoutChangingDatabase() throws Exception {
         long countBeforeRequest = countTickets();
 
-        mockMvc.perform(get("/api/tickets/abc"))
+        mockMvc.perform(get("/api/tickets/abc").principal(agentAuthentication()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(40002))
                 .andExpect(jsonPath("$.message").value("请求参数格式错误"));
@@ -130,5 +136,22 @@ class TicketQueryIntegrationTest {
 
     private static LambdaQueryWrapper<Ticket> queryByCreatorName(String creatorName) {
         return new LambdaQueryWrapper<Ticket>().eq(Ticket::getCreatorName, creatorName);
+    }
+
+    private static JwtAuthenticationToken agentAuthentication() {
+        Instant now = Instant.now();
+        Jwt jwt = new Jwt(
+                "query-integration-token",
+                now,
+                now.plusSeconds(300),
+                Map.of("alg", "HS256"),
+                Map.of(
+                        "sub", "100",
+                        "username", "query_agent",
+                        "role", "AGENT",
+                        "jti", UUID.randomUUID().toString()
+                )
+        );
+        return new JwtAuthenticationToken(jwt, List.of(), jwt.getSubject());
     }
 }
