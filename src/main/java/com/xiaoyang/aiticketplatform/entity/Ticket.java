@@ -22,6 +22,8 @@ public class Ticket {
 
     private Long creatorUserId;
 
+    private Long assigneeUserId;
+
     private TicketPriority priority;
 
     private TicketStatus status;
@@ -71,6 +73,14 @@ public class Ticket {
 
     public void setCreatorUserId(Long creatorUserId) {
         this.creatorUserId = creatorUserId;
+    }
+
+    public Long getAssigneeUserId() {
+        return assigneeUserId;
+    }
+
+    public void setAssigneeUserId(Long assigneeUserId) {
+        this.assigneeUserId = assigneeUserId;
     }
 
     public TicketPriority getPriority() {
