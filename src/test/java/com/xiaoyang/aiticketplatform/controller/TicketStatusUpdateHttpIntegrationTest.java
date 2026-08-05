@@ -2,14 +2,22 @@ package com.xiaoyang.aiticketplatform.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
+import com.xiaoyang.aiticketplatform.entity.TicketOperationLog;
+import com.xiaoyang.aiticketplatform.entity.UserAccount;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
+import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
+import com.xiaoyang.aiticketplatform.mapper.TicketOperationLogMapper;
+import com.xiaoyang.aiticketplatform.mapper.UserAccountMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.transaction.AfterTransaction;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -17,6 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.util.UUID;
+import java.util.List;
+import java.util.Map;
+import java.time.Instant;
 
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -40,8 +51,18 @@ class TicketStatusUpdateHttpIntegrationTest {
     @Autowired
     private TicketMapper ticketMapper;
 
+    @Autowired
+    private TicketOperationLogMapper ticketOperationLogMapper;
+
+    @Autowired
+    private UserAccountMapper userAccountMapper;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
     private MockMvc mockMvc;
     private String cleanupCreatorName;
+    private UserAccount operator;
 
     @BeforeEach
     void setUp() {
@@ -52,6 +73,10 @@ class TicketStatusUpdateHttpIntegrationTest {
     void verifyPreparedTicketWasRolledBack() {
         if (cleanupCreatorName != null) {
             assertEquals(0L, countPreparedTickets());
+            assertEquals(0L, userAccountMapper.selectCount(
+                    new LambdaQueryWrapper<UserAccount>()
+                            .eq(UserAccount::getUsername, cleanupCreatorName)
+            ));
         }
     }
 
@@ -64,6 +89,7 @@ class TicketStatusUpdateHttpIntegrationTest {
         performSuccessfulStatusUpdate(originalTicket, TicketStatus.CLOSED);
 
         mockMvc.perform(patch("/api/tickets/{id}/status", originalTicket.getId())
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("OPEN")))
                 .andExpect(status().isConflict())
@@ -72,6 +98,7 @@ class TicketStatusUpdateHttpIntegrationTest {
                 .andExpect(jsonPath("$.data").value(nullValue()));
 
         assertPersistedTicket(originalTicket, TicketStatus.CLOSED);
+        assertEquals(3L, countLogs(originalTicket.getId()));
     }
 
     @Test
@@ -79,6 +106,7 @@ class TicketStatusUpdateHttpIntegrationTest {
         Ticket originalTicket = insertUniqueTicket("HTTP跳级状态更新");
 
         mockMvc.perform(patch("/api/tickets/{id}/status", originalTicket.getId())
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("RESOLVED")))
                 .andExpect(status().isConflict())
@@ -87,6 +115,7 @@ class TicketStatusUpdateHttpIntegrationTest {
                 .andExpect(jsonPath("$.data").value(nullValue()));
 
         assertPersistedTicket(originalTicket, TicketStatus.OPEN);
+        assertEquals(0L, countLogs(originalTicket.getId()));
     }
 
     @Test
@@ -95,6 +124,7 @@ class TicketStatusUpdateHttpIntegrationTest {
         long countBeforeRequest = countTickets();
 
         mockMvc.perform(patch("/api/tickets/{id}/status", MISSING_TICKET_ID)
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("IN_PROGRESS")))
                 .andExpect(status().isNotFound())
@@ -111,6 +141,7 @@ class TicketStatusUpdateHttpIntegrationTest {
         Ticket originalTicket = insertUniqueTicket("HTTP请求体校验");
 
         mockMvc.perform(patch("/api/tickets/{id}/status", originalTicket.getId())
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -123,6 +154,7 @@ class TicketStatusUpdateHttpIntegrationTest {
                 .andExpect(jsonPath("$.data.status").value("目标状态不能为空"));
 
         mockMvc.perform(patch("/api/tickets/{id}/status", originalTicket.getId())
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("UNKNOWN")))
                 .andExpect(status().isBadRequest())
@@ -139,6 +171,7 @@ class TicketStatusUpdateHttpIntegrationTest {
         Ticket originalTicket = insertUniqueTicket("HTTP路径参数校验");
 
         mockMvc.perform(patch("/api/tickets/0/status")
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("IN_PROGRESS")))
                 .andExpect(status().isBadRequest())
@@ -146,6 +179,7 @@ class TicketStatusUpdateHttpIntegrationTest {
                 .andExpect(jsonPath("$.message").value("请求参数校验失败"));
 
         mockMvc.perform(patch("/api/tickets/abc/status")
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("IN_PROGRESS")))
                 .andExpect(status().isBadRequest())
@@ -176,6 +210,7 @@ class TicketStatusUpdateHttpIntegrationTest {
     private void performSuccessfulStatusUpdate(Ticket originalTicket, TicketStatus targetStatus)
             throws Exception {
         mockMvc.perform(patch("/api/tickets/{id}/status", originalTicket.getId())
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson(targetStatus.name())))
                 .andExpect(status().isOk())
@@ -211,6 +246,43 @@ class TicketStatusUpdateHttpIntegrationTest {
 
     private long countTickets() {
         return ticketMapper.selectCount(new LambdaQueryWrapper<>());
+    }
+
+    private long countLogs(Long ticketId) {
+        return ticketOperationLogMapper.selectCount(
+                new LambdaQueryWrapper<TicketOperationLog>()
+                        .eq(TicketOperationLog::getTicketId, ticketId)
+        );
+    }
+
+    private JwtAuthenticationToken authentication() {
+        if (cleanupCreatorName == null) {
+            cleanupCreatorName = "http-status-update-" + UUID.randomUUID();
+        }
+        if (operator == null) {
+            operator = new UserAccount();
+            operator.setUsername(cleanupCreatorName);
+            operator.setPasswordHash(passwordEncoder.encode("P7-3-2-http-status-password"));
+            operator.setDisplayName("P7-3-2 HTTP 状态操作者");
+            operator.setRole(UserRole.AGENT);
+            assertEquals(1, userAccountMapper.insert(operator));
+            assertNotNull(operator.getId());
+        }
+
+        Instant now = Instant.now();
+        Jwt jwt = new Jwt(
+                "test-token",
+                now,
+                now.plusSeconds(300),
+                Map.of("alg", "HS256"),
+                Map.of(
+                        "sub", operator.getId().toString(),
+                        "username", operator.getUsername(),
+                        "role", operator.getRole().name(),
+                        "jti", UUID.randomUUID().toString()
+                )
+        );
+        return new JwtAuthenticationToken(jwt, List.of(), jwt.getSubject());
     }
 
     private static String statusRequestJson(String status) {

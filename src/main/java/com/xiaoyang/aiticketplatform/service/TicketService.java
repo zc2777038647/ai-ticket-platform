@@ -19,7 +19,15 @@ public interface TicketService {
 
     PageResponse<TicketResponse> pageMyTickets(TicketPageQuery query, Long creatorUserId);
 
-    TicketResponse updateTicketStatus(Long id, UpdateTicketStatusRequest request);
+    TicketResponse updateTicketStatus(
+            Long id,
+            UpdateTicketStatusRequest request,
+            Long operatorUserId
+    );
 
-    TicketAssignmentResponse assignTicket(Long ticketId, AssignTicketRequest request);
+    TicketAssignmentResponse assignTicket(
+            Long ticketId,
+            AssignTicketRequest request,
+            Long operatorUserId
+    );
 }

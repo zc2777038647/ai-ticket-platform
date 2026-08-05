@@ -7,12 +7,15 @@ import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.AssignTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
+import com.xiaoyang.aiticketplatform.entity.TicketOperationLog;
 import com.xiaoyang.aiticketplatform.entity.UserAccount;
+import com.xiaoyang.aiticketplatform.enums.TicketOperationType;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
+import com.xiaoyang.aiticketplatform.mapper.TicketOperationLogMapper;
 import com.xiaoyang.aiticketplatform.mapper.UserAccountMapper;
 import com.xiaoyang.aiticketplatform.service.TicketService;
 import org.junit.jupiter.api.Test;
@@ -47,6 +50,9 @@ class TicketAssignmentIntegrationTest {
     private UserAccountMapper userAccountMapper;
 
     @Autowired
+    private TicketOperationLogMapper ticketOperationLogMapper;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     private String testPrefix;
@@ -69,14 +75,17 @@ class TicketAssignmentIntegrationTest {
     void shouldAssignUnassignedTicketThroughRealServiceAndMySql() {
         UserAccount creator = insertUser("creator", UserRole.USER);
         UserAccount agent = insertUser("agent", UserRole.AGENT);
+        UserAccount admin = insertUser("admin", UserRole.ADMIN);
         Ticket ticket = insertTicket("first", creator.getId(), null);
 
         TicketAssignmentResponse response = ticketService.assignTicket(
                 ticket.getId(),
-                new AssignTicketRequest(agent.getId())
+                new AssignTicketRequest(agent.getId()),
+                admin.getId()
         );
 
         Ticket persisted = ticketMapper.selectById(ticket.getId());
+        TicketOperationLog operationLog = singleLog(ticket.getId());
         assertAll(
                 () -> assertEquals(ticket.getId(), response.ticketId()),
                 () -> assertEquals(agent.getId(), response.assigneeUserId()),
@@ -88,7 +97,11 @@ class TicketAssignmentIntegrationTest {
                 () -> assertEquals(ticket.getCreatorName(), persisted.getCreatorName()),
                 () -> assertEquals(ticket.getCreatorUserId(), persisted.getCreatorUserId()),
                 () -> assertEquals(TicketPriority.HIGH, persisted.getPriority()),
-                () -> assertEquals(TicketStatus.OPEN, persisted.getStatus())
+                () -> assertEquals(TicketStatus.OPEN, persisted.getStatus()),
+                () -> assertEquals(TicketOperationType.ASSIGNEE_CHANGED, operationLog.getOperationType()),
+                () -> assertEquals(admin.getId(), operationLog.getOperatorUserId()),
+                () -> assertNull(operationLog.getBeforeValue()),
+                () -> assertEquals(agent.getId().toString(), operationLog.getAfterValue())
         );
     }
 
@@ -97,12 +110,14 @@ class TicketAssignmentIntegrationTest {
         UserAccount creator = insertUser("creator", UserRole.USER);
         UserAccount agentA = insertUser("agent_a", UserRole.AGENT);
         UserAccount agentB = insertUser("agent_b", UserRole.AGENT);
+        UserAccount admin = insertUser("admin", UserRole.ADMIN);
         Ticket ticket = insertTicket("reassign", creator.getId(), null);
 
-        ticketService.assignTicket(ticket.getId(), new AssignTicketRequest(agentA.getId()));
+        ticketService.assignTicket(ticket.getId(), new AssignTicketRequest(agentA.getId()), admin.getId());
         TicketAssignmentResponse response = ticketService.assignTicket(
                 ticket.getId(),
-                new AssignTicketRequest(agentB.getId())
+                new AssignTicketRequest(agentB.getId()),
+                admin.getId()
         );
 
         Ticket persisted = ticketMapper.selectById(ticket.getId());
@@ -111,7 +126,10 @@ class TicketAssignmentIntegrationTest {
                 () -> assertEquals(agentB.getUsername(), response.assigneeUsername()),
                 () -> assertEquals(agentB.getDisplayName(), response.assigneeDisplayName()),
                 () -> assertEquals(agentB.getId(), persisted.getAssigneeUserId()),
-                () -> assertEquals(TicketStatus.OPEN, persisted.getStatus())
+                () -> assertEquals(TicketStatus.OPEN, persisted.getStatus()),
+                () -> assertEquals(2L, countLogs(ticket.getId())),
+                () -> assertEquals(agentA.getId().toString(), latestLog(ticket.getId()).getBeforeValue()),
+                () -> assertEquals(agentB.getId().toString(), latestLog(ticket.getId()).getAfterValue())
         );
     }
 
@@ -119,23 +137,27 @@ class TicketAssignmentIntegrationTest {
     void shouldRejectNonAgentAndKeepRealDatabaseUnassigned() {
         UserAccount creator = insertUser("creator", UserRole.USER);
         UserAccount targetUser = insertUser("target_user", UserRole.USER);
+        UserAccount admin = insertUser("admin", UserRole.ADMIN);
         Ticket ticket = insertTicket("invalid-role", creator.getId(), null);
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
                 () -> ticketService.assignTicket(
                         ticket.getId(),
-                        new AssignTicketRequest(targetUser.getId())
+                        new AssignTicketRequest(targetUser.getId()),
+                        admin.getId()
                 )
         );
 
         assertEquals(ErrorCode.INVALID_ASSIGNEE_ROLE, exception.getErrorCode());
         assertNull(ticketMapper.selectById(ticket.getId()).getAssigneeUserId());
+        assertEquals(0L, countLogs(ticket.getId()));
     }
 
     @Test
     void shouldRejectMissingTargetAndKeepRealDatabaseUnassigned() {
         UserAccount creator = insertUser("creator", UserRole.USER);
+        UserAccount admin = insertUser("admin", UserRole.ADMIN);
         Ticket ticket = insertTicket("missing-target", creator.getId(), null);
         assertNull(userAccountMapper.selectById(Long.MAX_VALUE));
 
@@ -143,12 +165,14 @@ class TicketAssignmentIntegrationTest {
                 BusinessException.class,
                 () -> ticketService.assignTicket(
                         ticket.getId(),
-                        new AssignTicketRequest(Long.MAX_VALUE)
+                        new AssignTicketRequest(Long.MAX_VALUE),
+                        admin.getId()
                 )
         );
 
         assertEquals(ErrorCode.ASSIGNEE_NOT_FOUND, exception.getErrorCode());
         assertNull(ticketMapper.selectById(ticket.getId()).getAssigneeUserId());
+        assertEquals(0L, countLogs(ticket.getId()));
     }
 
     @Test
@@ -226,6 +250,31 @@ class TicketAssignmentIntegrationTest {
         return currentAssigneeUserId == null
                 ? wrapper.isNull(Ticket::getAssigneeUserId)
                 : wrapper.eq(Ticket::getAssigneeUserId, currentAssigneeUserId);
+    }
+
+    private TicketOperationLog singleLog(Long ticketId) {
+        TicketOperationLog operationLog = ticketOperationLogMapper.selectOne(
+                new LambdaQueryWrapper<TicketOperationLog>()
+                        .eq(TicketOperationLog::getTicketId, ticketId)
+        );
+        assertNotNull(operationLog);
+        return operationLog;
+    }
+
+    private TicketOperationLog latestLog(Long ticketId) {
+        return ticketOperationLogMapper.selectList(
+                        new LambdaQueryWrapper<TicketOperationLog>()
+                                .eq(TicketOperationLog::getTicketId, ticketId)
+                                .orderByDesc(TicketOperationLog::getCreatedAt)
+                                .orderByDesc(TicketOperationLog::getId)
+                ).getFirst();
+    }
+
+    private long countLogs(Long ticketId) {
+        return ticketOperationLogMapper.selectCount(
+                new LambdaQueryWrapper<TicketOperationLog>()
+                        .eq(TicketOperationLog::getTicketId, ticketId)
+        );
     }
 
     private String prefix() {

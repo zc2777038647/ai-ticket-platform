@@ -14,12 +14,15 @@ import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
+import com.xiaoyang.aiticketplatform.entity.TicketOperationLog;
 import com.xiaoyang.aiticketplatform.entity.UserAccount;
+import com.xiaoyang.aiticketplatform.enums.TicketOperationType;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
+import com.xiaoyang.aiticketplatform.mapper.TicketOperationLogMapper;
 import com.xiaoyang.aiticketplatform.mapper.UserAccountMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -67,6 +70,9 @@ class TicketServiceImplTest {
 
     @Mock
     private UserAccountMapper userAccountMapper;
+
+    @Mock
+    private TicketOperationLogMapper ticketOperationLogMapper;
 
     @InjectMocks
     private TicketServiceImpl ticketService;
@@ -469,8 +475,14 @@ class TicketServiceImplTest {
         UpdateTicketStatusRequest request = new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS);
         when(ticketMapper.selectById(100L)).thenReturn(ticket);
         when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(ticketOperationLogMapper.insert(any(TicketOperationLog.class))).thenAnswer(invocation -> {
+            TicketOperationLog operationLog = invocation.getArgument(0);
+            assertNull(operationLog.getId());
+            operationLog.setId(1000L);
+            return 1;
+        });
 
-        TicketResponse response = ticketService.updateTicketStatus(100L, request);
+        TicketResponse response = ticketService.updateTicketStatus(100L, request, 200L);
 
         ArgumentCaptor<LambdaUpdateWrapper<Ticket>> wrapperCaptor = ArgumentCaptor.forClass(
                 LambdaUpdateWrapper.class
@@ -481,8 +493,22 @@ class TicketServiceImplTest {
         verify(ticketMapper, never()).selectPage(any(Page.class), any(LambdaQueryWrapper.class));
         verifyNoMoreInteractions(ticketMapper);
 
+        ArgumentCaptor<TicketOperationLog> logCaptor = ArgumentCaptor.forClass(
+                TicketOperationLog.class
+        );
+        verify(ticketOperationLogMapper).insert(logCaptor.capture());
+        verifyNoMoreInteractions(ticketOperationLogMapper);
+        TicketOperationLog operationLog = logCaptor.getValue();
+
         assertNotNull(wrapperCaptor.getValue());
         assertAll(
+                () -> assertEquals(100L, operationLog.getTicketId()),
+                () -> assertEquals(200L, operationLog.getOperatorUserId()),
+                () -> assertEquals(TicketOperationType.STATUS_CHANGED, operationLog.getOperationType()),
+                () -> assertEquals("OPEN", operationLog.getBeforeValue()),
+                () -> assertEquals("IN_PROGRESS", operationLog.getAfterValue()),
+                () -> assertNull(operationLog.getCreatedAt()),
+                () -> assertEquals(1000L, operationLog.getId()),
                 () -> assertEquals(TicketStatus.IN_PROGRESS, ticket.getStatus()),
                 () -> assertTicketResponse(
                         response,
@@ -504,13 +530,15 @@ class TicketServiceImplTest {
                 BusinessException.class,
                 () -> ticketService.updateTicketStatus(
                         999L,
-                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                        200L
                 )
         );
 
         assertEquals(ErrorCode.TICKET_NOT_FOUND, exception.getErrorCode());
         verify(ticketMapper, times(1)).selectById(999L);
         verifyNoMoreInteractions(ticketMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
     }
 
     @Test
@@ -522,7 +550,8 @@ class TicketServiceImplTest {
                 BusinessException.class,
                 () -> ticketService.updateTicketStatus(
                         100L,
-                        new UpdateTicketStatusRequest(TicketStatus.CLOSED)
+                        new UpdateTicketStatusRequest(TicketStatus.CLOSED),
+                        200L
                 )
         );
 
@@ -530,6 +559,7 @@ class TicketServiceImplTest {
         assertEquals(TicketStatus.OPEN, ticket.getStatus());
         verify(ticketMapper, times(1)).selectById(100L);
         verifyNoMoreInteractions(ticketMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
     }
 
     @Test
@@ -542,7 +572,8 @@ class TicketServiceImplTest {
                 BusinessException.class,
                 () -> ticketService.updateTicketStatus(
                         100L,
-                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                        200L
                 )
         );
 
@@ -551,6 +582,7 @@ class TicketServiceImplTest {
         verify(ticketMapper, times(1)).selectById(100L);
         verify(ticketMapper, times(1)).update(isNull(), any(LambdaUpdateWrapper.class));
         verifyNoMoreInteractions(ticketMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
     }
 
     @Test
@@ -563,7 +595,8 @@ class TicketServiceImplTest {
                 IllegalStateException.class,
                 () -> ticketService.updateTicketStatus(
                         100L,
-                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                        200L
                 )
         );
 
@@ -572,6 +605,102 @@ class TicketServiceImplTest {
         verify(ticketMapper, times(1)).selectById(100L);
         verify(ticketMapper, times(1)).update(isNull(), any(LambdaUpdateWrapper.class));
         verifyNoMoreInteractions(ticketMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
+    }
+
+    @Test
+    void shouldKeepInMemoryStatusWhenStatusLogInsertAffectsNoRows() {
+        Ticket ticket = existingTicket();
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(ticketOperationLogMapper.insert(any(TicketOperationLog.class))).thenReturn(0);
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> ticketService.updateTicketStatus(
+                        100L,
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                        200L
+                )
+        );
+
+        assertEquals("记录工单操作日志失败：数据库插入影响行数不是 1", exception.getMessage());
+        assertEquals(TicketStatus.OPEN, ticket.getStatus());
+        verify(ticketMapper).selectById(100L);
+        verify(ticketMapper).update(isNull(), any(LambdaUpdateWrapper.class));
+        verify(ticketOperationLogMapper).insert(any(TicketOperationLog.class));
+        verifyNoMoreInteractions(ticketMapper, ticketOperationLogMapper);
+    }
+
+    @Test
+    void shouldKeepInMemoryStatusWhenStatusLogIdIsNotBackfilled() {
+        Ticket ticket = existingTicket();
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(ticketOperationLogMapper.insert(any(TicketOperationLog.class))).thenReturn(1);
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> ticketService.updateTicketStatus(
+                        100L,
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                        200L
+                )
+        );
+
+        assertEquals("记录工单操作日志失败：数据库自增 ID 未回填", exception.getMessage());
+        assertEquals(TicketStatus.OPEN, ticket.getStatus());
+        verify(ticketOperationLogMapper).insert(any(TicketOperationLog.class));
+    }
+
+    @Test
+    void shouldPropagateStatusLogRuntimeExceptionAndKeepInMemoryStatus() {
+        Ticket ticket = existingTicket();
+        RuntimeException failure = new RuntimeException("operation log unavailable");
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(ticketOperationLogMapper.insert(any(TicketOperationLog.class))).thenThrow(failure);
+
+        RuntimeException exception = assertThrows(
+                RuntimeException.class,
+                () -> ticketService.updateTicketStatus(
+                        100L,
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                        200L
+                )
+        );
+
+        assertEquals(failure, exception);
+        assertEquals(TicketStatus.OPEN, ticket.getStatus());
+    }
+
+    @Test
+    void shouldRejectNullStatusOperatorBeforeCallingMappers() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.updateTicketStatus(
+                        100L,
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                        null
+                )
+        );
+
+        verifyNoInteractions(ticketMapper, userAccountMapper, ticketOperationLogMapper);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, -1L})
+    void shouldRejectNonPositiveStatusOperatorBeforeCallingMappers(long operatorUserId) {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.updateTicketStatus(
+                        100L,
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                        operatorUserId
+                )
+        );
+
+        verifyNoInteractions(ticketMapper, userAccountMapper, ticketOperationLogMapper);
     }
 
     @Test
@@ -581,10 +710,17 @@ class TicketServiceImplTest {
         when(ticketMapper.selectById(100L)).thenReturn(ticket);
         when(userAccountMapper.selectById(200L)).thenReturn(target);
         when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(ticketOperationLogMapper.insert(any(TicketOperationLog.class))).thenAnswer(invocation -> {
+            TicketOperationLog operationLog = invocation.getArgument(0);
+            assertNull(operationLog.getId());
+            operationLog.setId(1001L);
+            return 1;
+        });
 
         TicketAssignmentResponse response = ticketService.assignTicket(
                 100L,
-                new AssignTicketRequest(200L)
+                new AssignTicketRequest(200L),
+                300L
         );
 
         ArgumentCaptor<LambdaUpdateWrapper<Ticket>> wrapperCaptor = ArgumentCaptor.forClass(
@@ -596,13 +732,26 @@ class TicketServiceImplTest {
         verify(ticketMapper, never()).updateById(any(Ticket.class));
         verifyNoMoreInteractions(ticketMapper, userAccountMapper);
 
+        ArgumentCaptor<TicketOperationLog> logCaptor = ArgumentCaptor.forClass(
+                TicketOperationLog.class
+        );
+        verify(ticketOperationLogMapper).insert(logCaptor.capture());
+        verifyNoMoreInteractions(ticketOperationLogMapper);
+
         LambdaUpdateWrapper<Ticket> wrapper = wrapperCaptor.getValue();
+        TicketOperationLog operationLog = logCaptor.getValue();
         assertAll(
                 () -> assertTrue(wrapper.getSqlSegment().contains("id")),
                 () -> assertTrue(wrapper.getSqlSegment().contains("assignee_user_id IS NULL")),
                 () -> assertTrue(wrapper.getSqlSet().contains("assignee_user_id")),
                 () -> assertTrue(wrapper.getParamNameValuePairs().containsValue(100L)),
                 () -> assertTrue(wrapper.getParamNameValuePairs().containsValue(200L)),
+                () -> assertEquals(100L, operationLog.getTicketId()),
+                () -> assertEquals(300L, operationLog.getOperatorUserId()),
+                () -> assertEquals(TicketOperationType.ASSIGNEE_CHANGED, operationLog.getOperationType()),
+                () -> assertNull(operationLog.getBeforeValue()),
+                () -> assertEquals("200", operationLog.getAfterValue()),
+                () -> assertNull(operationLog.getCreatedAt()),
                 () -> assertEquals(200L, ticket.getAssigneeUserId()),
                 () -> assertEquals(100L, response.ticketId()),
                 () -> assertEquals(200L, response.assigneeUserId()),
@@ -619,10 +768,16 @@ class TicketServiceImplTest {
         when(ticketMapper.selectById(100L)).thenReturn(ticket);
         when(userAccountMapper.selectById(202L)).thenReturn(target);
         when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(ticketOperationLogMapper.insert(any(TicketOperationLog.class))).thenAnswer(invocation -> {
+            TicketOperationLog operationLog = invocation.getArgument(0);
+            operationLog.setId(1002L);
+            return 1;
+        });
 
         TicketAssignmentResponse response = ticketService.assignTicket(
                 100L,
-                new AssignTicketRequest(202L)
+                new AssignTicketRequest(202L),
+                300L
         );
 
         ArgumentCaptor<LambdaUpdateWrapper<Ticket>> wrapperCaptor = ArgumentCaptor.forClass(
@@ -633,10 +788,20 @@ class TicketServiceImplTest {
         verify(ticketMapper).update(isNull(), wrapperCaptor.capture());
         verify(ticketMapper, never()).updateById(any(Ticket.class));
         verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+        ArgumentCaptor<TicketOperationLog> logCaptor = ArgumentCaptor.forClass(
+                TicketOperationLog.class
+        );
+        verify(ticketOperationLogMapper).insert(logCaptor.capture());
+        verifyNoMoreInteractions(ticketOperationLogMapper);
+        TicketOperationLog operationLog = logCaptor.getValue();
         assertAll(
                 () -> assertTrue(wrapperCaptor.getValue().getSqlSegment().contains("assignee_user_id")),
                 () -> assertTrue(wrapperCaptor.getValue().getParamNameValuePairs().containsValue(201L)),
                 () -> assertTrue(wrapperCaptor.getValue().getParamNameValuePairs().containsValue(202L)),
+                () -> assertEquals(300L, operationLog.getOperatorUserId()),
+                () -> assertEquals(TicketOperationType.ASSIGNEE_CHANGED, operationLog.getOperationType()),
+                () -> assertEquals("201", operationLog.getBeforeValue()),
+                () -> assertEquals("202", operationLog.getAfterValue()),
                 () -> assertEquals(202L, ticket.getAssigneeUserId()),
                 () -> assertEquals(202L, response.assigneeUserId()),
                 () -> assertEquals("agent_b", response.assigneeUsername()),
@@ -650,13 +815,14 @@ class TicketServiceImplTest {
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> ticketService.assignTicket(999L, new AssignTicketRequest(200L))
+                () -> ticketService.assignTicket(999L, new AssignTicketRequest(200L), 300L)
         );
 
         assertEquals(ErrorCode.TICKET_NOT_FOUND, exception.getErrorCode());
         verify(ticketMapper).selectById(999L);
         verifyNoMoreInteractions(ticketMapper);
         verifyNoInteractions(userAccountMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
     }
 
     @Test
@@ -667,7 +833,7 @@ class TicketServiceImplTest {
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> ticketService.assignTicket(100L, new AssignTicketRequest(999L))
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(999L), 300L)
         );
 
         assertEquals(ErrorCode.ASSIGNEE_NOT_FOUND, exception.getErrorCode());
@@ -675,6 +841,7 @@ class TicketServiceImplTest {
         verify(ticketMapper).selectById(100L);
         verify(userAccountMapper).selectById(999L);
         verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
     }
 
     @ParameterizedTest
@@ -687,7 +854,7 @@ class TicketServiceImplTest {
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> ticketService.assignTicket(100L, new AssignTicketRequest(200L))
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(200L), 300L)
         );
 
         assertEquals(ErrorCode.INVALID_ASSIGNEE_ROLE, exception.getErrorCode());
@@ -695,6 +862,7 @@ class TicketServiceImplTest {
         verify(ticketMapper).selectById(100L);
         verify(userAccountMapper).selectById(200L);
         verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
     }
 
     @Test
@@ -707,7 +875,7 @@ class TicketServiceImplTest {
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> ticketService.assignTicket(100L, new AssignTicketRequest(200L))
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(200L), 300L)
         );
 
         assertEquals(ErrorCode.TICKET_ALREADY_ASSIGNED, exception.getErrorCode());
@@ -715,6 +883,7 @@ class TicketServiceImplTest {
         verify(ticketMapper).selectById(100L);
         verify(userAccountMapper).selectById(200L);
         verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
     }
 
     @Test
@@ -728,7 +897,7 @@ class TicketServiceImplTest {
 
         BusinessException exception = assertThrows(
                 BusinessException.class,
-                () -> ticketService.assignTicket(100L, new AssignTicketRequest(202L))
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(202L), 300L)
         );
 
         assertEquals(ErrorCode.TICKET_ASSIGNMENT_CONFLICT, exception.getErrorCode());
@@ -737,6 +906,7 @@ class TicketServiceImplTest {
         verify(userAccountMapper).selectById(202L);
         verify(ticketMapper).update(isNull(), any(LambdaUpdateWrapper.class));
         verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
     }
 
     @Test
@@ -750,7 +920,7 @@ class TicketServiceImplTest {
 
         IllegalStateException exception = assertThrows(
                 IllegalStateException.class,
-                () -> ticketService.assignTicket(100L, new AssignTicketRequest(202L))
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(202L), 300L)
         );
 
         assertEquals("指派工单失败：数据库更新影响行数不是 1", exception.getMessage());
@@ -759,16 +929,70 @@ class TicketServiceImplTest {
         verify(userAccountMapper).selectById(202L);
         verify(ticketMapper).update(isNull(), any(LambdaUpdateWrapper.class));
         verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+        verifyNoInteractions(ticketOperationLogMapper);
+    }
+
+    @Test
+    void shouldKeepInMemoryAssigneeWhenAssignmentLogInsertAffectsNoRows() {
+        Ticket ticket = existingTicket();
+        ticket.setAssigneeUserId(201L);
+        UserAccount target = userAccount(202L, "agent_b", "处理人乙", UserRole.AGENT);
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(userAccountMapper.selectById(202L)).thenReturn(target);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+        when(ticketOperationLogMapper.insert(any(TicketOperationLog.class))).thenReturn(0);
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> ticketService.assignTicket(
+                        100L,
+                        new AssignTicketRequest(202L),
+                        300L
+                )
+        );
+
+        assertEquals("记录工单操作日志失败：数据库插入影响行数不是 1", exception.getMessage());
+        assertEquals(201L, ticket.getAssigneeUserId());
+        verify(ticketOperationLogMapper).insert(any(TicketOperationLog.class));
+    }
+
+    @Test
+    void shouldRejectNullAssignmentOperatorBeforeCallingMappers() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.assignTicket(
+                        100L,
+                        new AssignTicketRequest(200L),
+                        null
+                )
+        );
+
+        verifyNoInteractions(ticketMapper, userAccountMapper, ticketOperationLogMapper);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, -1L})
+    void shouldRejectNonPositiveAssignmentOperatorBeforeCallingMappers(long operatorUserId) {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.assignTicket(
+                        100L,
+                        new AssignTicketRequest(200L),
+                        operatorUserId
+                )
+        );
+
+        verifyNoInteractions(ticketMapper, userAccountMapper, ticketOperationLogMapper);
     }
 
     @Test
     void shouldRejectNullAssignmentTicketIdWithoutCallingMappers() {
         assertThrows(
                 IllegalArgumentException.class,
-                () -> ticketService.assignTicket(null, new AssignTicketRequest(200L))
+                () -> ticketService.assignTicket(null, new AssignTicketRequest(200L), 300L)
         );
 
-        verifyNoInteractions(ticketMapper, userAccountMapper);
+        verifyNoInteractions(ticketMapper, userAccountMapper, ticketOperationLogMapper);
     }
 
     @ParameterizedTest
@@ -776,10 +1000,10 @@ class TicketServiceImplTest {
     void shouldRejectNonPositiveAssignmentTicketIdWithoutCallingMappers(long ticketId) {
         assertThrows(
                 IllegalArgumentException.class,
-                () -> ticketService.assignTicket(ticketId, new AssignTicketRequest(200L))
+                () -> ticketService.assignTicket(ticketId, new AssignTicketRequest(200L), 300L)
         );
 
-        verifyNoInteractions(ticketMapper, userAccountMapper);
+        verifyNoInteractions(ticketMapper, userAccountMapper, ticketOperationLogMapper);
     }
 
     private static CreateTicketRequest validRequest() {

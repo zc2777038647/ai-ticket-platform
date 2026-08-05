@@ -7,14 +7,21 @@ import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
+import com.xiaoyang.aiticketplatform.entity.TicketOperationLog;
+import com.xiaoyang.aiticketplatform.entity.UserAccount;
+import com.xiaoyang.aiticketplatform.enums.TicketOperationType;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
+import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
+import com.xiaoyang.aiticketplatform.mapper.TicketOperationLogMapper;
+import com.xiaoyang.aiticketplatform.mapper.UserAccountMapper;
 import com.xiaoyang.aiticketplatform.service.TicketService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.transaction.AfterTransaction;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,13 +44,25 @@ class TicketStatusUpdateIntegrationTest {
     @Autowired
     private TicketMapper ticketMapper;
 
+    @Autowired
+    private TicketOperationLogMapper ticketOperationLogMapper;
+
+    @Autowired
+    private UserAccountMapper userAccountMapper;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
     private String cleanupCreatorName;
+    private UserAccount operator;
 
     @AfterTransaction
     void verifyPreparedTicketWasRolledBack() {
         if (cleanupCreatorName != null) {
             assertEquals(0L, ticketMapper.selectCount(new LambdaQueryWrapper<Ticket>()
                     .eq(Ticket::getCreatorName, cleanupCreatorName)));
+            assertEquals(0L, userAccountMapper.selectCount(new LambdaQueryWrapper<UserAccount>()
+                    .eq(UserAccount::getUsername, cleanupCreatorName)));
         }
     }
 
@@ -59,12 +78,14 @@ class TicketStatusUpdateIntegrationTest {
                 BusinessException.class,
                 () -> ticketService.updateTicketStatus(
                         ticket.getId(),
-                        new UpdateTicketStatusRequest(TicketStatus.OPEN)
+                        new UpdateTicketStatusRequest(TicketStatus.OPEN),
+                        operatorId()
                 )
         );
 
         assertEquals(ErrorCode.INVALID_TICKET_STATUS_TRANSITION, exception.getErrorCode());
         assertEquals(TicketStatus.CLOSED, ticketMapper.selectById(ticket.getId()).getStatus());
+        assertEquals(3L, countLogs(ticket.getId()));
     }
 
     @Test
@@ -75,12 +96,14 @@ class TicketStatusUpdateIntegrationTest {
                 BusinessException.class,
                 () -> ticketService.updateTicketStatus(
                         ticket.getId(),
-                        new UpdateTicketStatusRequest(TicketStatus.RESOLVED)
+                        new UpdateTicketStatusRequest(TicketStatus.RESOLVED),
+                        operatorId()
                 )
         );
 
         assertEquals(ErrorCode.INVALID_TICKET_STATUS_TRANSITION, exception.getErrorCode());
         assertEquals(TicketStatus.OPEN, ticketMapper.selectById(ticket.getId()).getStatus());
+        assertEquals(0L, countLogs(ticket.getId()));
     }
 
     @Test
@@ -92,7 +115,8 @@ class TicketStatusUpdateIntegrationTest {
                 BusinessException.class,
                 () -> ticketService.updateTicketStatus(
                         missingId,
-                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                        new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                        operatorId()
                 )
         );
 
@@ -142,9 +166,15 @@ class TicketStatusUpdateIntegrationTest {
     private void assertStatusUpdate(Ticket originalTicket, TicketStatus targetStatus) {
         TicketResponse response = ticketService.updateTicketStatus(
                 originalTicket.getId(),
-                new UpdateTicketStatusRequest(targetStatus)
+                new UpdateTicketStatusRequest(targetStatus),
+                operatorId()
         );
         Ticket persistedTicket = ticketMapper.selectById(originalTicket.getId());
+        TicketOperationLog latestLog = ticketOperationLogMapper.selectOne(
+                new LambdaQueryWrapper<TicketOperationLog>()
+                        .eq(TicketOperationLog::getTicketId, originalTicket.getId())
+                        .eq(TicketOperationLog::getAfterValue, targetStatus.name())
+        );
 
         assertAll(
                 () -> assertEquals(originalTicket.getId(), response.id()),
@@ -159,9 +189,37 @@ class TicketStatusUpdateIntegrationTest {
                 () -> assertEquals(originalTicket.getCreatorName(), persistedTicket.getCreatorName()),
                 () -> assertEquals(originalTicket.getPriority(), persistedTicket.getPriority()),
                 () -> assertEquals(targetStatus, persistedTicket.getStatus())
+                , () -> assertNotNull(latestLog)
+                , () -> assertEquals(operatorId(), latestLog.getOperatorUserId())
+                , () -> assertEquals(TicketOperationType.STATUS_CHANGED, latestLog.getOperationType())
+                , () -> assertEquals(originalTicket.getStatus().name(), latestLog.getBeforeValue())
+                , () -> assertEquals(targetStatus.name(), latestLog.getAfterValue())
         );
 
         originalTicket.setStatus(targetStatus);
+    }
+
+    private Long operatorId() {
+        if (operator == null) {
+            if (cleanupCreatorName == null) {
+                cleanupCreatorName = "status-update-" + UUID.randomUUID();
+            }
+            operator = new UserAccount();
+            operator.setUsername(cleanupCreatorName);
+            operator.setPasswordHash(passwordEncoder.encode("P7-3-2-status-test-password"));
+            operator.setDisplayName("P7-3-2 状态操作者");
+            operator.setRole(UserRole.AGENT);
+            assertEquals(1, userAccountMapper.insert(operator));
+            assertNotNull(operator.getId());
+        }
+        return operator.getId();
+    }
+
+    private long countLogs(Long ticketId) {
+        return ticketOperationLogMapper.selectCount(
+                new LambdaQueryWrapper<TicketOperationLog>()
+                        .eq(TicketOperationLog::getTicketId, ticketId)
+        );
     }
 
     private static LambdaUpdateWrapper<Ticket> statusUpdate(

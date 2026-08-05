@@ -81,18 +81,28 @@ public class TicketController {
     @PatchMapping("/{id}/status")
     public ResponseEntity<ApiResponse<TicketResponse>> updateTicketStatus(
             @PathVariable @Positive(message = "工单ID必须为正数") Long id,
-            @Valid @RequestBody UpdateTicketStatusRequest request
+            @Valid @RequestBody UpdateTicketStatusRequest request,
+            JwtAuthenticationToken authentication
     ) {
-        TicketResponse ticketResponse = ticketService.updateTicketStatus(id, request);
+        TicketResponse ticketResponse = ticketService.updateTicketStatus(
+                id,
+                request,
+                currentUserId(authentication)
+        );
         return ResponseEntity.ok(ApiResponse.success(ticketResponse));
     }
 
     @PatchMapping("/{id}/assignee")
     public ResponseEntity<ApiResponse<TicketAssignmentResponse>> assignTicket(
             @PathVariable @Positive(message = "工单ID必须为正数") Long id,
-            @Valid @RequestBody AssignTicketRequest request
+            @Valid @RequestBody AssignTicketRequest request,
+            JwtAuthenticationToken authentication
     ) {
-        TicketAssignmentResponse response = ticketService.assignTicket(id, request);
+        TicketAssignmentResponse response = ticketService.assignTicket(
+                id,
+                request,
+                currentUserId(authentication)
+        );
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 

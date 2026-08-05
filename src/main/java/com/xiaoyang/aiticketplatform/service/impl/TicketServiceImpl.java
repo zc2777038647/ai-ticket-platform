@@ -13,11 +13,14 @@ import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
+import com.xiaoyang.aiticketplatform.entity.TicketOperationLog;
 import com.xiaoyang.aiticketplatform.entity.UserAccount;
+import com.xiaoyang.aiticketplatform.enums.TicketOperationType;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
+import com.xiaoyang.aiticketplatform.mapper.TicketOperationLogMapper;
 import com.xiaoyang.aiticketplatform.mapper.UserAccountMapper;
 import com.xiaoyang.aiticketplatform.service.TicketService;
 import org.springframework.stereotype.Service;
@@ -32,10 +35,16 @@ public class TicketServiceImpl implements TicketService {
 
     private final TicketMapper ticketMapper;
     private final UserAccountMapper userAccountMapper;
+    private final TicketOperationLogMapper ticketOperationLogMapper;
 
-    public TicketServiceImpl(TicketMapper ticketMapper, UserAccountMapper userAccountMapper) {
+    public TicketServiceImpl(
+            TicketMapper ticketMapper,
+            UserAccountMapper userAccountMapper,
+            TicketOperationLogMapper ticketOperationLogMapper
+    ) {
         this.ticketMapper = ticketMapper;
         this.userAccountMapper = userAccountMapper;
+        this.ticketOperationLogMapper = ticketOperationLogMapper;
     }
 
     @Override
@@ -144,7 +153,13 @@ public class TicketServiceImpl implements TicketService {
 
     @Override
     @Transactional
-    public TicketResponse updateTicketStatus(Long id, UpdateTicketStatusRequest request) {
+    public TicketResponse updateTicketStatus(
+            Long id,
+            UpdateTicketStatusRequest request,
+            Long operatorUserId
+    ) {
+        validateOperatorUserId(operatorUserId);
+
         Ticket ticket = ticketMapper.selectById(id);
         if (ticket == null) {
             throw new BusinessException(ErrorCode.TICKET_NOT_FOUND);
@@ -169,13 +184,26 @@ public class TicketServiceImpl implements TicketService {
             throw new IllegalStateException("更新工单状态失败：数据库更新影响行数不是 1");
         }
 
+        appendOperationLog(
+                id,
+                operatorUserId,
+                TicketOperationType.STATUS_CHANGED,
+                currentStatus.name(),
+                targetStatus.name()
+        );
         ticket.setStatus(targetStatus);
         return toResponse(ticket);
     }
 
     @Override
     @Transactional
-    public TicketAssignmentResponse assignTicket(Long ticketId, AssignTicketRequest request) {
+    public TicketAssignmentResponse assignTicket(
+            Long ticketId,
+            AssignTicketRequest request,
+            Long operatorUserId
+    ) {
+        validateOperatorUserId(operatorUserId);
+
         if (ticketId == null || ticketId <= 0) {
             throw new IllegalArgumentException("ticketId 必须为正数");
         }
@@ -216,6 +244,13 @@ public class TicketServiceImpl implements TicketService {
             throw new IllegalStateException("指派工单失败：数据库更新影响行数不是 1");
         }
 
+        appendOperationLog(
+                ticketId,
+                operatorUserId,
+                TicketOperationType.ASSIGNEE_CHANGED,
+                currentAssigneeUserId == null ? null : currentAssigneeUserId.toString(),
+                targetAssigneeUserId.toString()
+        );
         ticket.setAssigneeUserId(targetAssigneeUserId);
         return new TicketAssignmentResponse(
                 ticket.getId(),
@@ -223,6 +258,35 @@ public class TicketServiceImpl implements TicketService {
                 targetAssignee.getUsername(),
                 targetAssignee.getDisplayName()
         );
+    }
+
+    private void validateOperatorUserId(Long operatorUserId) {
+        if (operatorUserId == null || operatorUserId <= 0) {
+            throw new IllegalArgumentException("operatorUserId 必须为正数");
+        }
+    }
+
+    private void appendOperationLog(
+            Long ticketId,
+            Long operatorUserId,
+            TicketOperationType operationType,
+            String beforeValue,
+            String afterValue
+    ) {
+        TicketOperationLog operationLog = new TicketOperationLog();
+        operationLog.setTicketId(ticketId);
+        operationLog.setOperatorUserId(operatorUserId);
+        operationLog.setOperationType(operationType);
+        operationLog.setBeforeValue(beforeValue);
+        operationLog.setAfterValue(afterValue);
+
+        int affectedRows = ticketOperationLogMapper.insert(operationLog);
+        if (affectedRows != 1) {
+            throw new IllegalStateException("记录工单操作日志失败：数据库插入影响行数不是 1");
+        }
+        if (operationLog.getId() == null) {
+            throw new IllegalStateException("记录工单操作日志失败：数据库自增 ID 未回填");
+        }
     }
 
     private TicketResponse toResponse(Ticket ticket) {

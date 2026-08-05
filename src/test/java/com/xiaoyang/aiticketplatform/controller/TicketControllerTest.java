@@ -412,10 +412,12 @@ class TicketControllerTest {
         );
         when(ticketService.updateTicketStatus(
                 100L,
-                new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                200L
         )).thenReturn(serviceResponse);
 
         mockMvc.perform(patch("/api/tickets/100/status")
+                        .principal(authentication(200L, UserRole.AGENT))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("IN_PROGRESS")))
                 .andExpect(status().isOk())
@@ -431,7 +433,11 @@ class TicketControllerTest {
         ArgumentCaptor<UpdateTicketStatusRequest> requestCaptor = ArgumentCaptor.forClass(
                 UpdateTicketStatusRequest.class
         );
-        verify(ticketService, times(1)).updateTicketStatus(eq(100L), requestCaptor.capture());
+        verify(ticketService, times(1)).updateTicketStatus(
+                eq(100L),
+                requestCaptor.capture(),
+                eq(200L)
+        );
         verify(ticketService, never()).createTicket(any(CreateTicketRequest.class), any(Long.class));
         verify(ticketService, never()).getTicketById(any(), any(), any());
         verify(ticketService, never()).pageTickets(any(TicketPageQuery.class));
@@ -442,6 +448,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectNullUpdateStatusWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/100/status")
+                        .principal(authentication(200L, UserRole.AGENT))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -459,6 +466,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectMissingUpdateStatusWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/100/status")
+                        .principal(authentication(200L, UserRole.AGENT))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest())
@@ -472,6 +480,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectUnknownUpdateStatusWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/100/status")
+                        .principal(authentication(200L, UserRole.AGENT))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("UNKNOWN")))
                 .andExpect(status().isBadRequest())
@@ -485,6 +494,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectZeroUpdateTicketIdWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/0/status")
+                        .principal(authentication(200L, UserRole.AGENT))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("IN_PROGRESS")))
                 .andExpect(status().isBadRequest())
@@ -498,6 +508,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectNonNumericUpdateTicketIdWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/abc/status")
+                        .principal(authentication(200L, UserRole.AGENT))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("IN_PROGRESS")))
                 .andExpect(status().isBadRequest())
@@ -531,10 +542,11 @@ class TicketControllerTest {
                 "agent_user",
                 "处理人员"
         );
-        when(ticketService.assignTicket(100L, new AssignTicketRequest(200L)))
+        when(ticketService.assignTicket(100L, new AssignTicketRequest(200L), 300L))
                 .thenReturn(serviceResponse);
 
         mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .principal(authentication(300L, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(assignmentRequestJson("200")))
                 .andExpect(status().isOk())
@@ -549,7 +561,7 @@ class TicketControllerTest {
         ArgumentCaptor<AssignTicketRequest> requestCaptor = ArgumentCaptor.forClass(
                 AssignTicketRequest.class
         );
-        verify(ticketService).assignTicket(eq(100L), requestCaptor.capture());
+        verify(ticketService).assignTicket(eq(100L), requestCaptor.capture(), eq(300L));
         verifyNoMoreInteractions(ticketService);
         assertEquals(200L, requestCaptor.getValue().assigneeUserId());
     }
@@ -557,6 +569,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectNullAssigneeUserIdWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .principal(authentication(300L, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(assignmentRequestJson("null")))
                 .andExpect(status().isBadRequest())
@@ -570,6 +583,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectZeroAssigneeUserIdWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .principal(authentication(300L, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(assignmentRequestJson("0")))
                 .andExpect(status().isBadRequest())
@@ -583,6 +597,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectNonNumericAssigneeUserIdWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .principal(authentication(300L, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(assignmentRequestJson("\"abc\"")))
                 .andExpect(status().isBadRequest())
@@ -596,6 +611,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectZeroAssignmentTicketIdWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/0/assignee")
+                        .principal(authentication(300L, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(assignmentRequestJson("200")))
                 .andExpect(status().isBadRequest())
@@ -608,6 +624,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectNonNumericAssignmentTicketIdWithoutCallingService() throws Exception {
         mockMvc.perform(patch("/api/tickets/abc/assignee")
+                        .principal(authentication(300L, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(assignmentRequestJson("200")))
                 .andExpect(status().isBadRequest())
@@ -647,10 +664,12 @@ class TicketControllerTest {
             throws Exception {
         when(ticketService.updateTicketStatus(
                 100L,
-                new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                200L
         )).thenThrow(new BusinessException(errorCode));
 
         mockMvc.perform(patch("/api/tickets/100/status")
+                        .principal(authentication(200L, UserRole.AGENT))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(statusRequestJson("IN_PROGRESS")))
                 .andExpect(status().is(expectedHttpStatus))
@@ -664,17 +683,19 @@ class TicketControllerTest {
 
         verify(ticketService, times(1)).updateTicketStatus(
                 100L,
-                new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
+                new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS),
+                200L
         );
         verifyNoMoreInteractions(ticketService);
     }
 
     private void assertAssignmentBusinessError(ErrorCode errorCode, int expectedHttpStatus)
             throws Exception {
-        when(ticketService.assignTicket(100L, new AssignTicketRequest(200L)))
+        when(ticketService.assignTicket(100L, new AssignTicketRequest(200L), 300L))
                 .thenThrow(new BusinessException(errorCode));
 
         mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .principal(authentication(300L, UserRole.ADMIN))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(assignmentRequestJson("200")))
                 .andExpect(status().is(expectedHttpStatus))
@@ -689,7 +710,7 @@ class TicketControllerTest {
                 .andExpect(content().string(not(containsString("ROLE_AGENT"))))
                 .andExpect(content().string(not(containsString("stackTrace"))));
 
-        verify(ticketService).assignTicket(100L, new AssignTicketRequest(200L));
+        verify(ticketService).assignTicket(100L, new AssignTicketRequest(200L), 300L);
         verifyNoMoreInteractions(ticketService);
     }
 
@@ -709,6 +730,10 @@ class TicketControllerTest {
     }
 
     private static JwtAuthenticationToken authentication(UserRole role) {
+        return authentication(100L, role);
+    }
+
+    private static JwtAuthenticationToken authentication(Long userId, UserRole role) {
         Instant now = Instant.now();
         Jwt jwt = new Jwt(
                 "test-token",
@@ -716,7 +741,7 @@ class TicketControllerTest {
                 now.plusSeconds(300),
                 Map.of("alg", "HS256"),
                 Map.of(
-                        "sub", "100",
+                        "sub", userId.toString(),
                         "username", "test_user",
                         "role", role.name(),
                         "jti", UUID.randomUUID().toString()
