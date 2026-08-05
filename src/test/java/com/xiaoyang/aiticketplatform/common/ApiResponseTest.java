@@ -74,6 +74,32 @@ class ApiResponseTest {
         );
     }
 
+    @Test
+    void shouldExposeTicketAssignmentBusinessErrorCodes() {
+        assertAll(
+                () -> assertErrorCode(
+                        ErrorCode.ASSIGNEE_NOT_FOUND,
+                        40401,
+                        "处理人不存在"
+                ),
+                () -> assertErrorCode(
+                        ErrorCode.INVALID_ASSIGNEE_ROLE,
+                        40903,
+                        "目标用户不是可指派的处理人"
+                ),
+                () -> assertErrorCode(
+                        ErrorCode.TICKET_ALREADY_ASSIGNED,
+                        40904,
+                        "工单已指派给该处理人"
+                ),
+                () -> assertErrorCode(
+                        ErrorCode.TICKET_ASSIGNMENT_CONFLICT,
+                        40905,
+                        "工单指派状态已发生变化，请刷新后重试"
+                )
+        );
+    }
+
     private static void assertErrorCode(ErrorCode errorCode, int code, String message) {
         ApiResponse<Void> response = ApiResponse.failure(errorCode);
         assertEquals(code, response.code());

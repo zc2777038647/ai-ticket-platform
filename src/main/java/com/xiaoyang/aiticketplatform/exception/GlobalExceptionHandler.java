@@ -120,10 +120,13 @@ public class GlobalExceptionHandler {
         return switch (errorCode) {
             case INVALID_CREDENTIALS, AUTHENTICATION_REQUIRED -> HttpStatus.UNAUTHORIZED;
             case AUTHORIZATION_DENIED -> HttpStatus.FORBIDDEN;
-            case TICKET_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case TICKET_NOT_FOUND, ASSIGNEE_NOT_FOUND -> HttpStatus.NOT_FOUND;
             case INVALID_TICKET_STATUS_TRANSITION,
                  TICKET_STATUS_CONFLICT,
-                 USERNAME_ALREADY_EXISTS -> HttpStatus.CONFLICT;
+                 USERNAME_ALREADY_EXISTS,
+                 INVALID_ASSIGNEE_ROLE,
+                 TICKET_ALREADY_ASSIGNED,
+                 TICKET_ASSIGNMENT_CONFLICT -> HttpStatus.CONFLICT;
             default -> null;
         };
     }

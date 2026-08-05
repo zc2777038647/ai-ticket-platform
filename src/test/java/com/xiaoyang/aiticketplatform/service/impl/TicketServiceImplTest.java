@@ -6,17 +6,21 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
+import com.xiaoyang.aiticketplatform.dto.request.AssignTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
 import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
+import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
+import com.xiaoyang.aiticketplatform.entity.UserAccount;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
+import com.xiaoyang.aiticketplatform.mapper.UserAccountMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -42,6 +46,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
@@ -59,6 +64,9 @@ class TicketServiceImplTest {
 
     @Mock
     private TicketMapper ticketMapper;
+
+    @Mock
+    private UserAccountMapper userAccountMapper;
 
     @InjectMocks
     private TicketServiceImpl ticketService;
@@ -566,6 +574,214 @@ class TicketServiceImplTest {
         verifyNoMoreInteractions(ticketMapper);
     }
 
+    @Test
+    void shouldAssignUnassignedTicketToAgent() {
+        Ticket ticket = existingTicket();
+        UserAccount target = userAccount(200L, "agent_a", "处理人甲", UserRole.AGENT);
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(userAccountMapper.selectById(200L)).thenReturn(target);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+
+        TicketAssignmentResponse response = ticketService.assignTicket(
+                100L,
+                new AssignTicketRequest(200L)
+        );
+
+        ArgumentCaptor<LambdaUpdateWrapper<Ticket>> wrapperCaptor = ArgumentCaptor.forClass(
+                LambdaUpdateWrapper.class
+        );
+        verify(ticketMapper).selectById(100L);
+        verify(userAccountMapper).selectById(200L);
+        verify(ticketMapper).update(isNull(), wrapperCaptor.capture());
+        verify(ticketMapper, never()).updateById(any(Ticket.class));
+        verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+
+        LambdaUpdateWrapper<Ticket> wrapper = wrapperCaptor.getValue();
+        assertAll(
+                () -> assertTrue(wrapper.getSqlSegment().contains("id")),
+                () -> assertTrue(wrapper.getSqlSegment().contains("assignee_user_id IS NULL")),
+                () -> assertTrue(wrapper.getSqlSet().contains("assignee_user_id")),
+                () -> assertTrue(wrapper.getParamNameValuePairs().containsValue(100L)),
+                () -> assertTrue(wrapper.getParamNameValuePairs().containsValue(200L)),
+                () -> assertEquals(200L, ticket.getAssigneeUserId()),
+                () -> assertEquals(100L, response.ticketId()),
+                () -> assertEquals(200L, response.assigneeUserId()),
+                () -> assertEquals("agent_a", response.assigneeUsername()),
+                () -> assertEquals("处理人甲", response.assigneeDisplayName())
+        );
+    }
+
+    @Test
+    void shouldReassignTicketFromOneAgentToAnother() {
+        Ticket ticket = existingTicket();
+        ticket.setAssigneeUserId(201L);
+        UserAccount target = userAccount(202L, "agent_b", "处理人乙", UserRole.AGENT);
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(userAccountMapper.selectById(202L)).thenReturn(target);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(1);
+
+        TicketAssignmentResponse response = ticketService.assignTicket(
+                100L,
+                new AssignTicketRequest(202L)
+        );
+
+        ArgumentCaptor<LambdaUpdateWrapper<Ticket>> wrapperCaptor = ArgumentCaptor.forClass(
+                LambdaUpdateWrapper.class
+        );
+        verify(ticketMapper).selectById(100L);
+        verify(userAccountMapper).selectById(202L);
+        verify(ticketMapper).update(isNull(), wrapperCaptor.capture());
+        verify(ticketMapper, never()).updateById(any(Ticket.class));
+        verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+        assertAll(
+                () -> assertTrue(wrapperCaptor.getValue().getSqlSegment().contains("assignee_user_id")),
+                () -> assertTrue(wrapperCaptor.getValue().getParamNameValuePairs().containsValue(201L)),
+                () -> assertTrue(wrapperCaptor.getValue().getParamNameValuePairs().containsValue(202L)),
+                () -> assertEquals(202L, ticket.getAssigneeUserId()),
+                () -> assertEquals(202L, response.assigneeUserId()),
+                () -> assertEquals("agent_b", response.assigneeUsername()),
+                () -> assertEquals("处理人乙", response.assigneeDisplayName())
+        );
+    }
+
+    @Test
+    void shouldRejectAssignmentWhenTicketDoesNotExist() {
+        when(ticketMapper.selectById(999L)).thenReturn(null);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.assignTicket(999L, new AssignTicketRequest(200L))
+        );
+
+        assertEquals(ErrorCode.TICKET_NOT_FOUND, exception.getErrorCode());
+        verify(ticketMapper).selectById(999L);
+        verifyNoMoreInteractions(ticketMapper);
+        verifyNoInteractions(userAccountMapper);
+    }
+
+    @Test
+    void shouldRejectAssignmentWhenTargetUserDoesNotExist() {
+        Ticket ticket = existingTicket();
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(userAccountMapper.selectById(999L)).thenReturn(null);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(999L))
+        );
+
+        assertEquals(ErrorCode.ASSIGNEE_NOT_FOUND, exception.getErrorCode());
+        assertNull(ticket.getAssigneeUserId());
+        verify(ticketMapper).selectById(100L);
+        verify(userAccountMapper).selectById(999L);
+        verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"USER", "ADMIN"})
+    void shouldRejectNonAgentTargetRole(String roleName) {
+        Ticket ticket = existingTicket();
+        UserAccount target = userAccount(200L, "target", "目标用户", UserRole.valueOf(roleName));
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(userAccountMapper.selectById(200L)).thenReturn(target);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(200L))
+        );
+
+        assertEquals(ErrorCode.INVALID_ASSIGNEE_ROLE, exception.getErrorCode());
+        assertNull(ticket.getAssigneeUserId());
+        verify(ticketMapper).selectById(100L);
+        verify(userAccountMapper).selectById(200L);
+        verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+    }
+
+    @Test
+    void shouldRejectDuplicateAssignmentToSameAgent() {
+        Ticket ticket = existingTicket();
+        ticket.setAssigneeUserId(200L);
+        UserAccount target = userAccount(200L, "agent_a", "处理人甲", UserRole.AGENT);
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(userAccountMapper.selectById(200L)).thenReturn(target);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(200L))
+        );
+
+        assertEquals(ErrorCode.TICKET_ALREADY_ASSIGNED, exception.getErrorCode());
+        assertEquals(200L, ticket.getAssigneeUserId());
+        verify(ticketMapper).selectById(100L);
+        verify(userAccountMapper).selectById(200L);
+        verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+    }
+
+    @Test
+    void shouldKeepInMemoryAssigneeWhenAssignmentConditionIsStale() {
+        Ticket ticket = existingTicket();
+        ticket.setAssigneeUserId(201L);
+        UserAccount target = userAccount(202L, "agent_b", "处理人乙", UserRole.AGENT);
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(userAccountMapper.selectById(202L)).thenReturn(target);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(0);
+
+        BusinessException exception = assertThrows(
+                BusinessException.class,
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(202L))
+        );
+
+        assertEquals(ErrorCode.TICKET_ASSIGNMENT_CONFLICT, exception.getErrorCode());
+        assertEquals(201L, ticket.getAssigneeUserId());
+        verify(ticketMapper).selectById(100L);
+        verify(userAccountMapper).selectById(202L);
+        verify(ticketMapper).update(isNull(), any(LambdaUpdateWrapper.class));
+        verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+    }
+
+    @Test
+    void shouldKeepInMemoryAssigneeWhenAssignmentAffectsMultipleRows() {
+        Ticket ticket = existingTicket();
+        ticket.setAssigneeUserId(201L);
+        UserAccount target = userAccount(202L, "agent_b", "处理人乙", UserRole.AGENT);
+        when(ticketMapper.selectById(100L)).thenReturn(ticket);
+        when(userAccountMapper.selectById(202L)).thenReturn(target);
+        when(ticketMapper.update(isNull(), any(LambdaUpdateWrapper.class))).thenReturn(2);
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> ticketService.assignTicket(100L, new AssignTicketRequest(202L))
+        );
+
+        assertEquals("指派工单失败：数据库更新影响行数不是 1", exception.getMessage());
+        assertEquals(201L, ticket.getAssigneeUserId());
+        verify(ticketMapper).selectById(100L);
+        verify(userAccountMapper).selectById(202L);
+        verify(ticketMapper).update(isNull(), any(LambdaUpdateWrapper.class));
+        verifyNoMoreInteractions(ticketMapper, userAccountMapper);
+    }
+
+    @Test
+    void shouldRejectNullAssignmentTicketIdWithoutCallingMappers() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.assignTicket(null, new AssignTicketRequest(200L))
+        );
+
+        verifyNoInteractions(ticketMapper, userAccountMapper);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, -1L})
+    void shouldRejectNonPositiveAssignmentTicketIdWithoutCallingMappers(long ticketId) {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.assignTicket(ticketId, new AssignTicketRequest(200L))
+        );
+
+        verifyNoInteractions(ticketMapper, userAccountMapper);
+    }
+
     private static CreateTicketRequest validRequest() {
         return new CreateTicketRequest(
                 "无法登录系统",
@@ -602,6 +818,20 @@ class TicketServiceImplTest {
         ticket.setPriority(priority);
         ticket.setStatus(status);
         return ticket;
+    }
+
+    private static UserAccount userAccount(
+            Long id,
+            String username,
+            String displayName,
+            UserRole role
+    ) {
+        UserAccount user = new UserAccount();
+        user.setId(id);
+        user.setUsername(username);
+        user.setDisplayName(displayName);
+        user.setRole(role);
+        return user;
     }
 
     private static void assertTicketResponse(

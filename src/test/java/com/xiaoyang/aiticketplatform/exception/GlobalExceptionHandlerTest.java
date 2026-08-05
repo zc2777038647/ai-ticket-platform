@@ -203,6 +203,26 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldReturnNotFoundWhenAssigneeDoesNotExist() throws Exception {
+        assertAssignmentError(ErrorCode.ASSIGNEE_NOT_FOUND, 404);
+    }
+
+    @Test
+    void shouldReturnConflictWhenAssigneeRoleIsInvalid() throws Exception {
+        assertAssignmentError(ErrorCode.INVALID_ASSIGNEE_ROLE, 409);
+    }
+
+    @Test
+    void shouldReturnConflictWhenTicketIsAlreadyAssigned() throws Exception {
+        assertAssignmentError(ErrorCode.TICKET_ALREADY_ASSIGNED, 409);
+    }
+
+    @Test
+    void shouldReturnConflictWhenTicketAssignmentIsStale() throws Exception {
+        assertAssignmentError(ErrorCode.TICKET_ASSIGNMENT_CONFLICT, 409);
+    }
+
+    @Test
     void shouldSafelyHandleUnmappedBusinessErrorCode() throws Exception {
         mockMvc.perform(get("/test/tickets/unmapped-business-error"))
                 .andExpect(status().isInternalServerError())
@@ -300,6 +320,20 @@ class GlobalExceptionHandlerTest {
         assertTrue(fieldError.isBindingFailure());
     }
 
+    private void assertAssignmentError(ErrorCode errorCode, int expectedHttpStatus) throws Exception {
+        mockMvc.perform(get("/test/tickets/assignment-errors/{errorCode}", errorCode.name()))
+                .andExpect(status().is(expectedHttpStatus))
+                .andExpect(jsonPath("$.code").value(errorCode.getCode()))
+                .andExpect(jsonPath("$.message").value(errorCode.getMessage()))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("DataIntegrityViolationException"))))
+                .andExpect(content().string(not(containsString("SQL"))))
+                .andExpect(content().string(not(containsString("fk_tickets_assignee_user"))))
+                .andExpect(content().string(not(containsString("ROLE_AGENT"))))
+                .andExpect(content().string(not(containsString("stackTrace"))));
+    }
+
     private static String validRequestJson() {
         return """
                 {
@@ -352,6 +386,11 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/users/username-conflict")
         void throwUsernameAlreadyExists() {
             throw new BusinessException(ErrorCode.USERNAME_ALREADY_EXISTS);
+        }
+
+        @GetMapping("/test/tickets/assignment-errors/{errorCode}")
+        void throwAssignmentError(@PathVariable ErrorCode errorCode) {
+            throw new BusinessException(errorCode);
         }
 
         @GetMapping("/test/tickets/unmapped-business-error")

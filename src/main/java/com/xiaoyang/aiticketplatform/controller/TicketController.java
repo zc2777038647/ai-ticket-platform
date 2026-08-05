@@ -2,9 +2,11 @@ package com.xiaoyang.aiticketplatform.controller;
 
 import com.xiaoyang.aiticketplatform.common.ApiResponse;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
+import com.xiaoyang.aiticketplatform.dto.request.AssignTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
 import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
+import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.service.TicketService;
@@ -83,6 +85,15 @@ public class TicketController {
     ) {
         TicketResponse ticketResponse = ticketService.updateTicketStatus(id, request);
         return ResponseEntity.ok(ApiResponse.success(ticketResponse));
+    }
+
+    @PatchMapping("/{id}/assignee")
+    public ResponseEntity<ApiResponse<TicketAssignmentResponse>> assignTicket(
+            @PathVariable @Positive(message = "工单ID必须为正数") Long id,
+            @Valid @RequestBody AssignTicketRequest request
+    ) {
+        TicketAssignmentResponse response = ticketService.assignTicket(id, request);
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     private Long currentUserId(JwtAuthenticationToken authentication) {

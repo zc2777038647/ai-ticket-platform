@@ -5,30 +5,37 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
+import com.xiaoyang.aiticketplatform.dto.request.AssignTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
 import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
+import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
+import com.xiaoyang.aiticketplatform.entity.UserAccount;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
+import com.xiaoyang.aiticketplatform.mapper.UserAccountMapper;
 import com.xiaoyang.aiticketplatform.service.TicketService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Objects;
 
 @Service
 public class TicketServiceImpl implements TicketService {
 
     private final TicketMapper ticketMapper;
+    private final UserAccountMapper userAccountMapper;
 
-    public TicketServiceImpl(TicketMapper ticketMapper) {
+    public TicketServiceImpl(TicketMapper ticketMapper, UserAccountMapper userAccountMapper) {
         this.ticketMapper = ticketMapper;
+        this.userAccountMapper = userAccountMapper;
     }
 
     @Override
@@ -164,6 +171,58 @@ public class TicketServiceImpl implements TicketService {
 
         ticket.setStatus(targetStatus);
         return toResponse(ticket);
+    }
+
+    @Override
+    @Transactional
+    public TicketAssignmentResponse assignTicket(Long ticketId, AssignTicketRequest request) {
+        if (ticketId == null || ticketId <= 0) {
+            throw new IllegalArgumentException("ticketId 必须为正数");
+        }
+
+        Ticket ticket = ticketMapper.selectById(ticketId);
+        if (ticket == null) {
+            throw new BusinessException(ErrorCode.TICKET_NOT_FOUND);
+        }
+
+        Long targetAssigneeUserId = request.assigneeUserId();
+        UserAccount targetAssignee = userAccountMapper.selectById(targetAssigneeUserId);
+        if (targetAssignee == null) {
+            throw new BusinessException(ErrorCode.ASSIGNEE_NOT_FOUND);
+        }
+        if (targetAssignee.getRole() != UserRole.AGENT) {
+            throw new BusinessException(ErrorCode.INVALID_ASSIGNEE_ROLE);
+        }
+
+        Long currentAssigneeUserId = ticket.getAssigneeUserId();
+        if (Objects.equals(currentAssigneeUserId, targetAssigneeUserId)) {
+            throw new BusinessException(ErrorCode.TICKET_ALREADY_ASSIGNED);
+        }
+
+        LambdaUpdateWrapper<Ticket> updateWrapper = Wrappers.lambdaUpdate(Ticket.class)
+                .eq(Ticket::getId, ticketId)
+                .set(Ticket::getAssigneeUserId, targetAssigneeUserId);
+        if (currentAssigneeUserId == null) {
+            updateWrapper.isNull(Ticket::getAssigneeUserId);
+        } else {
+            updateWrapper.eq(Ticket::getAssigneeUserId, currentAssigneeUserId);
+        }
+
+        int affectedRows = ticketMapper.update(null, updateWrapper);
+        if (affectedRows == 0) {
+            throw new BusinessException(ErrorCode.TICKET_ASSIGNMENT_CONFLICT);
+        }
+        if (affectedRows != 1) {
+            throw new IllegalStateException("指派工单失败：数据库更新影响行数不是 1");
+        }
+
+        ticket.setAssigneeUserId(targetAssigneeUserId);
+        return new TicketAssignmentResponse(
+                ticket.getId(),
+                targetAssignee.getId(),
+                targetAssignee.getUsername(),
+                targetAssignee.getDisplayName()
+        );
     }
 
     private TicketResponse toResponse(Ticket ticket) {

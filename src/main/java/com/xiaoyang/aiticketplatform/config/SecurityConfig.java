@@ -38,6 +38,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/tickets")
                         .hasAnyRole("AGENT", "ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/tickets/*").authenticated()
+                        .requestMatchers(HttpMethod.PATCH, "/api/tickets/*/assignee")
+                        .hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PATCH, "/api/tickets/*/status")
                         .hasAnyRole("AGENT", "ADMIN")
                         .anyRequest().permitAll())

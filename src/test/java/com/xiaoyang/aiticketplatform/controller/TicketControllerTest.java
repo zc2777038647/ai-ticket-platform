@@ -1,10 +1,12 @@
 package com.xiaoyang.aiticketplatform.controller;
 
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
+import com.xiaoyang.aiticketplatform.dto.request.AssignTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
 import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
+import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
@@ -521,6 +523,126 @@ class TicketControllerTest {
         assertStatusUpdateBusinessError(ErrorCode.TICKET_STATUS_CONFLICT, 409);
     }
 
+    @Test
+    void shouldAssignTicket() throws Exception {
+        TicketAssignmentResponse serviceResponse = new TicketAssignmentResponse(
+                100L,
+                200L,
+                "agent_user",
+                "处理人员"
+        );
+        when(ticketService.assignTicket(100L, new AssignTicketRequest(200L)))
+                .thenReturn(serviceResponse);
+
+        mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(assignmentRequestJson("200")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.message").value("success"))
+                .andExpect(jsonPath("$.data.ticketId").value(100))
+                .andExpect(jsonPath("$.data.assigneeUserId").value(200))
+                .andExpect(jsonPath("$.data.assigneeUsername").value("agent_user"))
+                .andExpect(jsonPath("$.data.assigneeDisplayName").value("处理人员"))
+                .andExpect(content().string(not(containsString("passwordHash"))));
+
+        ArgumentCaptor<AssignTicketRequest> requestCaptor = ArgumentCaptor.forClass(
+                AssignTicketRequest.class
+        );
+        verify(ticketService).assignTicket(eq(100L), requestCaptor.capture());
+        verifyNoMoreInteractions(ticketService);
+        assertEquals(200L, requestCaptor.getValue().assigneeUserId());
+    }
+
+    @Test
+    void shouldRejectNullAssigneeUserIdWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(assignmentRequestJson("null")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"))
+                .andExpect(jsonPath("$.data.assigneeUserId").value("处理人ID不能为空"));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectZeroAssigneeUserIdWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(assignmentRequestJson("0")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"))
+                .andExpect(jsonPath("$.data.assigneeUserId").value("处理人ID必须为正数"));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectNonNumericAssigneeUserIdWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(assignmentRequestJson("\"abc\"")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40001))
+                .andExpect(jsonPath("$.message").value("请求体格式错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectZeroAssignmentTicketIdWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/0/assignee")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(assignmentRequestJson("200")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40000))
+                .andExpect(jsonPath("$.message").value("请求参数校验失败"));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldRejectNonNumericAssignmentTicketIdWithoutCallingService() throws Exception {
+        mockMvc.perform(patch("/api/tickets/abc/assignee")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(assignmentRequestJson("200")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40002))
+                .andExpect(jsonPath("$.message").value("请求参数格式错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldReturnNotFoundWhenAssigningMissingTicket() throws Exception {
+        assertAssignmentBusinessError(ErrorCode.TICKET_NOT_FOUND, 404);
+    }
+
+    @Test
+    void shouldReturnNotFoundWhenAssigneeDoesNotExist() throws Exception {
+        assertAssignmentBusinessError(ErrorCode.ASSIGNEE_NOT_FOUND, 404);
+    }
+
+    @Test
+    void shouldReturnConflictWhenAssigneeRoleIsInvalid() throws Exception {
+        assertAssignmentBusinessError(ErrorCode.INVALID_ASSIGNEE_ROLE, 409);
+    }
+
+    @Test
+    void shouldReturnConflictForDuplicateAssignment() throws Exception {
+        assertAssignmentBusinessError(ErrorCode.TICKET_ALREADY_ASSIGNED, 409);
+    }
+
+    @Test
+    void shouldReturnConflictForConcurrentAssignmentChange() throws Exception {
+        assertAssignmentBusinessError(ErrorCode.TICKET_ASSIGNMENT_CONFLICT, 409);
+    }
+
     private void assertStatusUpdateBusinessError(ErrorCode errorCode, int expectedHttpStatus)
             throws Exception {
         when(ticketService.updateTicketStatus(
@@ -544,6 +666,30 @@ class TicketControllerTest {
                 100L,
                 new UpdateTicketStatusRequest(TicketStatus.IN_PROGRESS)
         );
+        verifyNoMoreInteractions(ticketService);
+    }
+
+    private void assertAssignmentBusinessError(ErrorCode errorCode, int expectedHttpStatus)
+            throws Exception {
+        when(ticketService.assignTicket(100L, new AssignTicketRequest(200L)))
+                .thenThrow(new BusinessException(errorCode));
+
+        mockMvc.perform(patch("/api/tickets/100/assignee")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(assignmentRequestJson("200")))
+                .andExpect(status().is(expectedHttpStatus))
+                .andExpect(jsonPath("$.code").value(errorCode.getCode()))
+                .andExpect(jsonPath("$.message").value(errorCode.getMessage()))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("DataIntegrityViolationException"))))
+                .andExpect(content().string(not(containsString("java.lang"))))
+                .andExpect(content().string(not(containsString("SQL"))))
+                .andExpect(content().string(not(containsString("fk_tickets_assignee_user"))))
+                .andExpect(content().string(not(containsString("ROLE_AGENT"))))
+                .andExpect(content().string(not(containsString("stackTrace"))));
+
+        verify(ticketService).assignTicket(100L, new AssignTicketRequest(200L));
         verifyNoMoreInteractions(ticketService);
     }
 
@@ -585,5 +731,13 @@ class TicketControllerTest {
                   "status": "%s"
                 }
                 """.formatted(status);
+    }
+
+    private static String assignmentRequestJson(String assigneeUserIdJson) {
+        return """
+                {
+                  "assigneeUserId": %s
+                }
+                """.formatted(assigneeUserIdJson);
     }
 }
