@@ -20,11 +20,16 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
 import java.util.List;
+import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
@@ -82,9 +87,10 @@ class TicketControllerTest {
                 TicketPriority.HIGH,
                 TicketStatus.OPEN
         );
-        when(ticketService.createTicket(any(CreateTicketRequest.class))).thenReturn(serviceResponse);
+        when(ticketService.createTicket(any(CreateTicketRequest.class), eq(100L))).thenReturn(serviceResponse);
 
         mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(validRequestJson()))
                 .andExpect(status().isCreated())
@@ -96,7 +102,7 @@ class TicketControllerTest {
                 .andExpect(jsonPath("$.data.status").value("OPEN"));
 
         ArgumentCaptor<CreateTicketRequest> requestCaptor = ArgumentCaptor.forClass(CreateTicketRequest.class);
-        verify(ticketService, times(1)).createTicket(requestCaptor.capture());
+        verify(ticketService, times(1)).createTicket(requestCaptor.capture(), eq(100L));
         verifyNoMoreInteractions(ticketService);
         CreateTicketRequest capturedRequest = requestCaptor.getValue();
         assertAll(
@@ -110,6 +116,7 @@ class TicketControllerTest {
     @Test
     void shouldRejectBlankTitleWithoutCallingService() throws Exception {
         mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -129,10 +136,11 @@ class TicketControllerTest {
 
     @Test
     void shouldReturnInternalErrorWhenServiceFails() throws Exception {
-        when(ticketService.createTicket(any(CreateTicketRequest.class)))
+        when(ticketService.createTicket(any(CreateTicketRequest.class), eq(100L)))
                 .thenThrow(new IllegalStateException("敏感内部错误"));
 
         mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(validRequestJson()))
                 .andExpect(status().isInternalServerError())
@@ -141,7 +149,7 @@ class TicketControllerTest {
                 .andExpect(jsonPath("$.data").value(nullValue()))
                 .andExpect(content().string(not(containsString("敏感内部错误"))));
 
-        verify(ticketService, times(1)).createTicket(any(CreateTicketRequest.class));
+        verify(ticketService, times(1)).createTicket(any(CreateTicketRequest.class), eq(100L));
         verifyNoMoreInteractions(ticketService);
     }
 
@@ -169,7 +177,7 @@ class TicketControllerTest {
                 .andExpect(jsonPath("$.data.status").value("OPEN"));
 
         verify(ticketService, times(1)).getTicketById(100L);
-        verify(ticketService, never()).createTicket(any(CreateTicketRequest.class));
+        verify(ticketService, never()).createTicket(any(CreateTicketRequest.class), any(Long.class));
         verifyNoMoreInteractions(ticketService);
     }
 
@@ -187,7 +195,7 @@ class TicketControllerTest {
                 .andExpect(content().string(not(containsString("stackTrace"))));
 
         verify(ticketService, times(1)).getTicketById(999L);
-        verify(ticketService, never()).createTicket(any(CreateTicketRequest.class));
+        verify(ticketService, never()).createTicket(any(CreateTicketRequest.class), any(Long.class));
         verifyNoMoreInteractions(ticketService);
     }
 
@@ -364,7 +372,7 @@ class TicketControllerTest {
                 UpdateTicketStatusRequest.class
         );
         verify(ticketService, times(1)).updateTicketStatus(eq(100L), requestCaptor.capture());
-        verify(ticketService, never()).createTicket(any(CreateTicketRequest.class));
+        verify(ticketService, never()).createTicket(any(CreateTicketRequest.class), any(Long.class));
         verify(ticketService, never()).getTicketById(any());
         verify(ticketService, never()).pageTickets(any(TicketPageQuery.class));
         verifyNoMoreInteractions(ticketService);
@@ -490,6 +498,23 @@ class TicketControllerTest {
                   "priority": "HIGH"
                 }
                 """;
+    }
+
+    private static JwtAuthenticationToken authentication() {
+        Instant now = Instant.now();
+        Jwt jwt = new Jwt(
+                "test-token",
+                now,
+                now.plusSeconds(300),
+                Map.of("alg", "HS256"),
+                Map.of(
+                        "sub", "100",
+                        "username", "test_user",
+                        "role", "USER",
+                        "jti", UUID.randomUUID().toString()
+                )
+        );
+        return new JwtAuthenticationToken(jwt, List.of(), jwt.getSubject());
     }
 
     private static String statusRequestJson(String status) {

@@ -19,6 +19,8 @@ import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -26,9 +28,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -68,7 +72,7 @@ class TicketServiceImplTest {
             return 1;
         });
 
-        TicketResponse response = ticketService.createTicket(request);
+        TicketResponse response = ticketService.createTicket(request, 100L);
 
         ArgumentCaptor<Ticket> ticketCaptor = ArgumentCaptor.forClass(Ticket.class);
         verify(ticketMapper, times(1)).insert(ticketCaptor.capture());
@@ -79,6 +83,7 @@ class TicketServiceImplTest {
                 () -> assertEquals("无法登录系统", insertedTicket.getTitle()),
                 () -> assertEquals("用户输入正确密码后仍然无法登录", insertedTicket.getDescription()),
                 () -> assertEquals("小杨", insertedTicket.getCreatorName()),
+                () -> assertEquals(100L, insertedTicket.getCreatorUserId()),
                 () -> assertEquals(TicketPriority.HIGH, insertedTicket.getPriority()),
                 () -> assertEquals(TicketStatus.OPEN, insertedTicket.getStatus()),
                 () -> assertNull(insertedTicket.getCreatedAt()),
@@ -88,8 +93,54 @@ class TicketServiceImplTest {
                 () -> assertEquals("用户输入正确密码后仍然无法登录", response.description()),
                 () -> assertEquals("小杨", response.creatorName()),
                 () -> assertEquals(TicketPriority.HIGH, response.priority()),
-                () -> assertEquals(TicketStatus.OPEN, response.status())
+                () -> assertEquals(TicketStatus.OPEN, response.status()),
+                () -> assertFalse(Arrays.stream(TicketResponse.class.getRecordComponents())
+                        .anyMatch(component -> component.getName().equals("creatorUserId")))
         );
+    }
+
+    @Test
+    void shouldKeepCreatorNameAsDisplayTextWithoutChangingCreatorUserId() {
+        CreateTicketRequest request = new CreateTicketRequest(
+                "身份边界测试",
+                "展示文本不能决定用户ID",
+                "其他人的显示名称",
+                TicketPriority.HIGH
+        );
+        when(ticketMapper.insert(any(Ticket.class))).thenAnswer(invocation -> {
+            Ticket ticket = invocation.getArgument(0);
+            ticket.setId(101L);
+            return 1;
+        });
+
+        ticketService.createTicket(request, 100L);
+
+        ArgumentCaptor<Ticket> ticketCaptor = ArgumentCaptor.forClass(Ticket.class);
+        verify(ticketMapper).insert(ticketCaptor.capture());
+        verifyNoMoreInteractions(ticketMapper);
+        assertEquals("其他人的显示名称", ticketCaptor.getValue().getCreatorName());
+        assertEquals(100L, ticketCaptor.getValue().getCreatorUserId());
+    }
+
+    @Test
+    void shouldRejectNullCreatorUserIdWithoutCallingMapper() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.createTicket(validRequest(), null)
+        );
+
+        verifyNoMoreInteractions(ticketMapper);
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, -1L})
+    void shouldRejectNonPositiveCreatorUserIdWithoutCallingMapper(long creatorUserId) {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ticketService.createTicket(validRequest(), creatorUserId)
+        );
+
+        verifyNoMoreInteractions(ticketMapper);
     }
 
     @Test
@@ -98,7 +149,7 @@ class TicketServiceImplTest {
 
         IllegalStateException exception = assertThrows(
                 IllegalStateException.class,
-                () -> ticketService.createTicket(validRequest())
+                () -> ticketService.createTicket(validRequest(), 100L)
         );
 
         assertEquals("创建工单失败：数据库插入影响行数不是 1", exception.getMessage());
@@ -112,7 +163,7 @@ class TicketServiceImplTest {
 
         IllegalStateException exception = assertThrows(
                 IllegalStateException.class,
-                () -> ticketService.createTicket(validRequest())
+                () -> ticketService.createTicket(validRequest(), 100L)
         );
 
         assertEquals("创建工单失败：数据库自增 ID 未回填", exception.getMessage());

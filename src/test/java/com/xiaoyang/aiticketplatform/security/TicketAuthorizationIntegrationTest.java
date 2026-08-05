@@ -57,6 +57,7 @@ class TicketAuthorizationIntegrationTest {
     private PasswordEncoder passwordEncoder;
 
     private String testPrefix;
+    private Long authenticatedUserId;
 
     @AfterTransaction
     void verifyTestDataWasRolledBack() {
@@ -86,7 +87,7 @@ class TicketAuthorizationIntegrationTest {
     @Test
     void shouldAllowUserToCreateTicketInRealDatabase() throws Exception {
         String token = loginToken(UserRole.USER);
-        String creatorName = prefix() + "creator";
+        String creatorName = prefix() + "客户端填写的展示名称";
 
         MvcResult result = mockMvc.perform(post("/api/tickets")
                         .header(HttpHeaders.AUTHORIZATION, bearer(token))
@@ -100,8 +101,41 @@ class TicketAuthorizationIntegrationTest {
         Number id = JsonPath.read(result.getResponse().getContentAsString(), "$.data.id");
         Ticket persisted = ticketMapper.selectById(id.longValue());
         assertNotNull(persisted);
+        assertEquals(authenticatedUserId, persisted.getCreatorUserId());
         assertEquals(creatorName, persisted.getCreatorName());
         assertEquals(TicketStatus.OPEN, persisted.getStatus());
+    }
+
+    @Test
+    void shouldBindAgentIdWhenAgentCreatesTicket() throws Exception {
+        assertAuthenticatedCreatorBinding(UserRole.AGENT);
+    }
+
+    @Test
+    void shouldBindAdminIdWhenAdminCreatesTicket() throws Exception {
+        assertAuthenticatedCreatorBinding(UserRole.ADMIN);
+    }
+
+    @Test
+    void shouldIgnoreClientSuppliedCreatorUserIdAndUseTokenSubject() throws Exception {
+        String token = loginToken(UserRole.USER);
+        Long tokenUserId = authenticatedUserId;
+        UserAccount anotherUser = insertUser(UserRole.AGENT, "other");
+        String creatorName = prefix() + "override-attempt";
+
+        MvcResult result = mockMvc.perform(post("/api/tickets")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createTicketJson(creatorName, anotherUser.getId())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value(0))
+                .andReturn();
+
+        Number ticketId = JsonPath.read(result.getResponse().getContentAsString(), "$.data.id");
+        Ticket persisted = ticketMapper.selectById(ticketId.longValue());
+        assertNotNull(persisted);
+        assertEquals(tokenUserId, persisted.getCreatorUserId());
+        assertEquals(creatorName, persisted.getCreatorName());
     }
 
     @Test
@@ -211,6 +245,26 @@ class TicketAuthorizationIntegrationTest {
                 .andExpect(jsonPath("$.data.creatorName").value(ticket.getCreatorName()));
     }
 
+    private void assertAuthenticatedCreatorBinding(UserRole role) throws Exception {
+        String token = loginToken(role);
+        Long expectedUserId = authenticatedUserId;
+        String creatorName = prefix() + role.name().toLowerCase(Locale.ROOT) + "-display";
+
+        MvcResult result = mockMvc.perform(post("/api/tickets")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createTicketJson(creatorName)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value(0))
+                .andReturn();
+
+        Number ticketId = JsonPath.read(result.getResponse().getContentAsString(), "$.data.id");
+        Ticket persisted = ticketMapper.selectById(ticketId.longValue());
+        assertNotNull(persisted);
+        assertEquals(expectedUserId, persisted.getCreatorUserId());
+        assertEquals(creatorName, persisted.getCreatorName());
+    }
+
     private void assertStatusUpdateAllowed(
             String token,
             Ticket ticket,
@@ -246,7 +300,22 @@ class TicketAuthorizationIntegrationTest {
     }
 
     private String loginToken(UserRole role) throws Exception {
-        String username = prefix() + role.name().toLowerCase(Locale.ROOT);
+        UserAccount user = insertUser(role, role.name().toLowerCase(Locale.ROOT));
+        String password = "P5_5_test_password";
+        authenticatedUserId = user.getId();
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginJson(user.getUsername(), password)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.user.role").value(role.name()))
+                .andReturn();
+        return JsonPath.read(loginResult.getResponse().getContentAsString(), "$.data.accessToken");
+    }
+
+    private UserAccount insertUser(UserRole role, String suffix) {
+        String username = prefix() + suffix;
         String password = "P5_5_test_password";
         UserAccount user = new UserAccount();
         user.setUsername(username);
@@ -256,15 +325,7 @@ class TicketAuthorizationIntegrationTest {
         assertEquals(1, userAccountMapper.insert(user));
         assertNotNull(user.getId());
         assertTrue(passwordEncoder.matches(password, user.getPasswordHash()));
-
-        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(loginJson(username, password)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(0))
-                .andExpect(jsonPath("$.data.user.role").value(role.name()))
-                .andReturn();
-        return JsonPath.read(loginResult.getResponse().getContentAsString(), "$.data.accessToken");
+        return user;
     }
 
     private Ticket insertTicket(TicketStatus status) {
@@ -304,6 +365,18 @@ class TicketAuthorizationIntegrationTest {
                   "priority": "HIGH"
                 }
                 """.formatted(creatorName);
+    }
+
+    private static String createTicketJson(String creatorName, Long attemptedCreatorUserId) {
+        return """
+                {
+                  "title": "授权测试工单",
+                  "description": "授权测试描述",
+                  "creatorName": "%s",
+                  "priority": "HIGH",
+                  "creatorUserId": %d
+                }
+                """.formatted(creatorName, attemptedCreatorUserId);
     }
 
     private static String statusJson(String status) {

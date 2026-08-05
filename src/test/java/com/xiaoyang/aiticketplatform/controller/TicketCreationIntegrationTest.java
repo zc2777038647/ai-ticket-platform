@@ -3,14 +3,20 @@ package com.xiaoyang.aiticketplatform.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.jayway.jsonpath.JsonPath;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
+import com.xiaoyang.aiticketplatform.entity.UserAccount;
 import com.xiaoyang.aiticketplatform.enums.TicketPriority;
 import com.xiaoyang.aiticketplatform.enums.TicketStatus;
+import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.mapper.TicketMapper;
+import com.xiaoyang.aiticketplatform.mapper.UserAccountMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.test.context.transaction.AfterTransaction;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -18,6 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.util.List;
+import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
@@ -38,20 +46,40 @@ class TicketCreationIntegrationTest {
     @Autowired
     private TicketMapper ticketMapper;
 
+    @Autowired
+    private UserAccountMapper userAccountMapper;
+
     private MockMvc mockMvc;
+    private String cleanupPrefix;
+    private Long authenticatedUserId;
 
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
     }
 
+    @AfterTransaction
+    void verifyPreparedDataWasRolledBack() {
+        if (cleanupPrefix != null) {
+            assertEquals(0L, ticketMapper.selectCount(
+                    new LambdaQueryWrapper<Ticket>()
+                            .likeRight(Ticket::getCreatorName, cleanupPrefix)
+            ));
+            assertEquals(0L, userAccountMapper.selectCount(
+                    new LambdaQueryWrapper<UserAccount>()
+                            .likeRight(UserAccount::getUsername, cleanupPrefix)
+            ));
+        }
+    }
+
     @Test
     void shouldCreateTicketThroughCompleteApplicationChain() throws Exception {
-        String creatorName = uniqueCreatorName("p16-success-");
+        String creatorName = uniqueCreatorName("success");
         String title = "P1 全链路测试工单";
         String description = "验证 Controller 到 MySQL 的完整创建链路";
 
         MvcResult mvcResult = mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestJson(title, description, creatorName, "HIGH")))
                 .andExpect(status().isCreated())
@@ -77,6 +105,7 @@ class TicketCreationIntegrationTest {
                 () -> assertEquals(title, persistedTicket.getTitle()),
                 () -> assertEquals(description, persistedTicket.getDescription()),
                 () -> assertEquals(creatorName, persistedTicket.getCreatorName()),
+                () -> assertEquals(authenticatedUserId, persistedTicket.getCreatorUserId()),
                 () -> assertEquals(TicketPriority.HIGH, persistedTicket.getPriority()),
                 () -> assertEquals(TicketStatus.OPEN, persistedTicket.getStatus()),
                 () -> assertNotNull(persistedTicket.getCreatedAt()),
@@ -86,10 +115,11 @@ class TicketCreationIntegrationTest {
 
     @Test
     void shouldNotInsertTicketWhenValidationFails() throws Exception {
-        String creatorName = uniqueCreatorName("p16-invalid-");
+        String creatorName = uniqueCreatorName("invalid");
         assertEquals(0L, ticketMapper.selectCount(queryByCreatorName(creatorName)));
 
         mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestJson("   ", "测试描述", creatorName, "HIGH")))
                 .andExpect(status().isBadRequest())
@@ -101,10 +131,11 @@ class TicketCreationIntegrationTest {
 
     @Test
     void shouldNotInsertTicketWhenPriorityIsUnknown() throws Exception {
-        String creatorName = uniqueCreatorName("p16-enum-");
+        String creatorName = uniqueCreatorName("enum");
         assertEquals(0L, ticketMapper.selectCount(queryByCreatorName(creatorName)));
 
         mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestJson("测试工单", "测试描述", creatorName, "UNKNOWN")))
                 .andExpect(status().isBadRequest())
@@ -118,8 +149,41 @@ class TicketCreationIntegrationTest {
         return new LambdaQueryWrapper<Ticket>().eq(Ticket::getCreatorName, creatorName);
     }
 
-    private static String uniqueCreatorName(String prefix) {
-        return prefix + UUID.randomUUID();
+    private String uniqueCreatorName(String scenario) {
+        return prefix() + scenario;
+    }
+
+    private JwtAuthenticationToken authentication() {
+        UserAccount user = new UserAccount();
+        user.setUsername(prefix() + "user");
+        user.setPasswordHash("{test-only-hash}:ticket-creation");
+        user.setDisplayName("创建工单集成测试用户");
+        user.setRole(UserRole.USER);
+        assertEquals(1, userAccountMapper.insert(user));
+        assertNotNull(user.getId());
+        authenticatedUserId = user.getId();
+
+        Instant now = Instant.now();
+        Jwt jwt = new Jwt(
+                "test-token",
+                now,
+                now.plusSeconds(300),
+                Map.of("alg", "HS256"),
+                Map.of(
+                        "sub", user.getId().toString(),
+                        "username", user.getUsername(),
+                        "role", "USER",
+                        "jti", UUID.randomUUID().toString()
+                )
+        );
+        return new JwtAuthenticationToken(jwt, List.of(), jwt.getSubject());
+    }
+
+    private String prefix() {
+        if (cleanupPrefix == null) {
+            cleanupPrefix = "p16_" + UUID.randomUUID().toString().replace("-", "") + "_";
+        }
+        return cleanupPrefix;
     }
 
     private static String requestJson(

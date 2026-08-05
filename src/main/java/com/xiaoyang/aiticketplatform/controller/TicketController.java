@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -32,9 +33,11 @@ public class TicketController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<TicketResponse>> createTicket(
-            @Valid @RequestBody CreateTicketRequest request
+            @Valid @RequestBody CreateTicketRequest request,
+            JwtAuthenticationToken authentication
     ) {
-        TicketResponse ticketResponse = ticketService.createTicket(request);
+        Long creatorUserId = Long.valueOf(authentication.getName());
+        TicketResponse ticketResponse = ticketService.createTicket(request, creatorUserId);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success(ticketResponse));
     }

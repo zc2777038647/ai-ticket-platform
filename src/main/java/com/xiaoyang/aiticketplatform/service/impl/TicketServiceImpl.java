@@ -32,11 +32,16 @@ public class TicketServiceImpl implements TicketService {
 
     @Override
     @Transactional
-    public TicketResponse createTicket(CreateTicketRequest request) {
+    public TicketResponse createTicket(CreateTicketRequest request, Long creatorUserId) {
+        if (creatorUserId == null || creatorUserId <= 0) {
+            throw new IllegalArgumentException("creatorUserId 必须为正数");
+        }
+
         Ticket ticket = new Ticket();
         ticket.setTitle(request.title());
         ticket.setDescription(request.description());
         ticket.setCreatorName(request.creatorName());
+        ticket.setCreatorUserId(creatorUserId);
         ticket.setPriority(request.priority());
         ticket.setStatus(TicketStatus.OPEN);
 
