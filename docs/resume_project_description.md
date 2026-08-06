@@ -1,6 +1,6 @@
 # 简历项目描述备选
 
-本文用于制作正式中文简历。所有表述只覆盖当前已完成的 Java 工单后端，不把 AI、RAG、Redis 或生产部署写成事实。
+本文用于制作正式中文简历。所有表述只覆盖当前已完成的 Java 工单后端；Redis 登录限流和创建幂等属于已实现事实，AI、RAG 和生产部署仍只属于规划。
 
 ## 1. 项目名称建议
 
@@ -18,19 +18,19 @@
 
 ## 2. 一句话项目说明
 
-基于 Spring Boot 构建工单业务后端，实现 JWT 认证授权、条件更新并发控制与操作审计。
+基于 Spring Boot 构建工单业务后端，实现 JWT 认证授权、条件更新与事务审计，并以 Redis Lua 为登录和创建链路提供有限窗口保护。
 
 ## 3. 默认四条简历要点
 
-- 设计并实现用户、工单与操作日志三表模型，基于 MyBatis-Plus 完成创建、详情、条件分页、状态流转和指派，并通过 Flyway V1～V6 管理数据库演进。
-- 基于 BCrypt、HS256 JWT 和 Spring Security 构建三角色认证授权体系，结合请求级规则与 Service 对象级所有权，限制 USER 仅访问本人创建的工单。
-- 通过旧状态及旧处理人条件 UPDATE 实现状态流转和指派的并发冲突识别，区分非法操作、重复指派与数据已变化等业务错误，避免无条件更新静默覆盖。
-- 将业务 UPDATE 与操作日志 INSERT 纳入同一事务，并以真实 MySQL 外键故障验证失败回滚；建立45个测试类、329项自动化测试的分层证据。
+- 设计用户、工单与操作日志三表模型，基于 MyBatis-Plus 实现创建、详情、条件分页、状态流转和指派，以 Flyway V1～V6 管理数据库演进及身份外键。
+- 基于 BCrypt、HS256 JWT 和 Spring Security 构建 USER、AGENT、ADMIN 三角色认证授权，分离请求级权限与 Service 对象级所有权，可信身份统一来自 JWT `sub`。
+- 通过旧状态/旧处理人条件 UPDATE 识别并发冲突，将业务更新与操作日志写入同一事务，并使用真实 MySQL 外键故障验证两次写入一起回滚。
+- 基于 Redis Lua 实现登录 IP/规范化用户名双维度固定窗口限流，并设计用户作用域 `Idempotency-Key` 状态机，支持处理中冲突识别和成功响应重放；以60个测试类、448项测试覆盖关键边界。
 
 ## 4. 技术栈行
 
 ```text
-Java 21 / Spring Boot 4.1 / Spring Security / MyBatis-Plus / MySQL 8.4 / Flyway / JWT / Docker Compose / Maven
+Java 21 / Spring Boot 4.1 / Spring Security / MyBatis-Plus / MySQL 8.4 / Flyway / JWT / Redis 7.4 / Spring Data Redis / Lettuce / Lua / Docker Compose / Maven
 ```
 
 补充测试技术可单独写为：
@@ -43,13 +43,13 @@ JUnit Jupiter / Mockito / MockMvc / Spring Boot Test / 真实 MySQL 集成测试
 
 ### 项目说明
 
-基于 Spring Boot 的工单业务后端，覆盖 JWT 认证授权、工单流转、管理员指派和操作审计。
+基于 Spring Boot 的工单业务后端，覆盖 JWT 认证授权、工单流转、事务审计，以及 Redis 登录限流和创建幂等。
 
 ### 三条要点
 
 - 基于 MyBatis-Plus、MySQL 和 Flyway V1～V6 实现用户、工单、条件分页、状态流转及处理人指派，维护三张核心表的可追踪演进。
 - 使用 BCrypt、HS256 JWT 与 Spring Security 构建 USER、AGENT、ADMIN 三角色权限，并在 Service 中实现 USER 工单详情所有权过滤。
-- 采用旧状态/旧处理人条件 UPDATE 识别并发冲突，将业务修改与操作日志同事务提交，并通过329项分层测试验证核心链路。
+- 采用条件 UPDATE 与同事务日志保证业务一致性，并使用 Redis Lua 实现登录固定窗口限流和用户作用域创建幂等；通过448项分层测试验证核心链路与故障边界。
 
 ## 6. 详细版
 
@@ -63,7 +63,8 @@ JUnit Jupiter / Mockito / MockMvc / Spring Boot Test / 真实 MySQL 集成测试
 - 设计 `users`、`tickets`、`ticket_operation_logs` 三张核心表，使用 Flyway V1～V6 处理状态值对齐、创建者/处理人外键及追加式日志演进。
 - 使用 BCrypt strength 10 保存密码哈希，以 HS256 JWT 承载用户 ID、用户名和角色，并通过 Resource Server Validator、Converter、401/403 Handler 建立无状态认证链。
 - 将 SecurityFilterChain 的请求级角色规则与 TicketService 的对象级所有权分离；USER 查询他人工单统一返回404，`creatorName` 不参与授权判断。
-- 使用旧状态和旧处理人条件 UPDATE 防止静默覆盖，并将业务 UPDATE 与操作日志 INSERT 纳入同一事务；45个测试类、329项测试覆盖单元、MVC、安全和真实 MySQL 场景。
+- 使用旧状态和旧处理人条件 UPDATE 防止静默覆盖，并将业务 UPDATE 与操作日志 INSERT 纳入同一 MySQL 事务。
+- 基于单 Key Redis Lua 实现登录双维度固定窗口计数，以及 `PROCESSING/SUCCEEDED` 创建幂等状态机；60个测试类、448项测试覆盖单元、MVC、真实 MySQL、真实 Redis 和 HTTP 场景。
 
 ## 7. 不推荐写法
 
@@ -79,7 +80,11 @@ JUnit Jupiter / Mockito / MockMvc / Spring Boot Test / 真实 MySQL 集成测试
 | 保证系统绝对安全 | 仍无 Token 撤销、限流、渗透测试和密钥轮换 |
 | 操作日志不可篡改 | 目前只是应用层追加式，数据库权限持有者仍可能修改 |
 | 完整解决分布式并发 | 当前是单体、单数据库条件更新，没有多节点一致性验证 |
-| 329个端到端测试 | 329是多个测试层次的实例总数，不全是端到端 |
+| Redis 与 MySQL 强一致 | 两个存储不在同一事务，存在提交后的失败窗口 |
+| exactly-once 或彻底防重复 | 当前仅在 Redis TTL 内协调和重放，没有 MySQL 持久化幂等 |
+| 分布式锁或支付级幂等 | 当前是请求状态机，不是通用锁，也没有支付级恢复证据 |
+| 高并发性能提升 | 没有压测、QPS、延迟或对照数据 |
+| 448个端到端测试 | 448是多个测试层次的实例总数，不全是端到端 |
 | 精通 Spring Security | 单个项目只能证明具体实现与理解，不能证明“精通” |
 
 ## 8. 可量化事实清单
@@ -88,14 +93,15 @@ JUnit Jupiter / Mockito / MockMvc / Spring Boot Test / 真实 MySQL 集成测试
 | --- | ---: |
 | 用户角色 | 3：USER、AGENT、ADMIN |
 | Flyway 迁移 | 6：V1～V6 |
-| 自动化测试实例 | 329 |
-| Surefire 测试类 | 45 |
+| 自动化测试实例 | 448 |
+| Surefire 测试类 | 60 |
 | 核心业务表 | 3：users、tickets、ticket_operation_logs |
 | 业务与健康类 HTTP 端点 | 11：9个业务端点、2个 Actuator 端点 |
 | 工单状态 | 4 |
 | 实际允许状态迁移边 | 3 |
 | 操作日志类型 | 2：STATUS_CHANGED、ASSIGNEE_CHANGED |
-| 应用错误码 | 15 |
+| 应用错误码 | 19 |
+| Redis Lua 脚本 | 4：登录限流1个、创建幂等3个 |
 
 当前没有可用于简历的 QPS、响应时间、并发用户数、性能提升百分比或代码覆盖率数据。
 

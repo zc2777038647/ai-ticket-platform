@@ -10,7 +10,7 @@
 
 ### A2. 项目当前解决了什么问题？【高频】
 
-**答：** 当前解决用户注册登录、三角色授权、工单创建查询分页、顺序状态流转、ADMIN 指派和操作留痕。身份来自 JWT，状态和指派使用条件更新，业务修改与日志同事务。通知、评论、日志查询和 AI 分类仍未实现。
+**答：** 当前解决用户注册登录、三角色授权、工单创建查询分页、顺序状态流转、ADMIN 指派和操作留痕，并以 Redis Lua 实现登录固定窗口限流和创建幂等。身份来自 JWT，状态和指派使用条件更新，业务修改与日志同事务；通知、评论、日志查询和 AI 分类仍未实现。
 
 ### A3. 为什么选择单体架构？【高频】
 
@@ -30,11 +30,11 @@
 
 ### A7. 当前最有说服力的项目证据是什么？
 
-**答：** 除了可定位的生产代码和 V1～V6，项目有45个 Surefire 测试类、329项测试实例，并通过真实 MySQL 验证外键、条件更新、JWT 安全链和日志失败回滚。但这些不是压力测试，也不等于生产运行证据。
+**答：** 除了可定位的生产代码和 V1～V6，项目有60个 Surefire 测试类、448项测试实例，并通过真实 MySQL 和 Redis 验证外键、事务回滚、JWT、限流 Lua 与幂等状态机。但这些不是压力测试，也不等于生产运行证据。
 
 ### A8. 如果继续开发，优先做什么？【追问】
 
-**答：** 我会先收紧 `anyRequest().permitAll()` 的兜底规则，再补操作日志只读查询和“分配给我”。之后考虑用户停用、Token 撤销、限流与幂等，最后才接入分类、优先级建议和回复草稿，避免 AI 绕过基础业务边界。
+**答：** 我会先收紧 `anyRequest().permitAll()` 的兜底规则，再补操作日志只读查询和“分配给我”。之后评估可信代理、Token 撤销、Redis缓存一致性和MySQL持久化幂等，最后才接入分类、优先级建议和回复草稿。
 
 **代码定位：** `README.md`、`docs/p7_project_stage_review.md`、`src/main/java/.../controller`、`src/main/java/.../service/impl`。
 
@@ -352,9 +352,9 @@
 
 **答：** MySQL 自增分配不保证事务回滚后复用，这是并发和实现语义的一部分。测试不依赖 ID 连续，也不通过清空表恢复编号。业务如果需要连续号码，不能直接把数据库主键当业务序列。
 
-### H6. 为什么329项不能都称为端到端测试？【高频】
+### H6. 为什么448项不能都称为端到端测试？【高频】
 
-**答：** 329包含 DTO Validation、Mockito 单元、standalone MVC、Mapper、Service/MySQL、HTTP Security 和上下文冒烟等45个测试类。只有部分经过完整 HTTP、安全和数据库链路，全部称为端到端会夸大证据。
+**答：** 448包含 DTO Validation、Mockito、standalone MVC、Mapper、Service/MySQL、Redis状态机、HTTP Security 和上下文冒烟等60个测试类。只有部分经过完整 HTTP、安全和数据库/Redis链路，全部称为端到端会夸大证据。
 
 ### H7. Mockito 测试能证明事务生效吗？【追问】
 
@@ -382,8 +382,130 @@
 
 **代码定位：** `src/test/java/...`、`TicketServiceImplTest`、`TicketControllerTest`、`BearerAuthenticationIntegrationTest`、`TicketOwnershipIntegrationTest`、`TicketOperationAtomicityIntegrationTest`、`docs/testing_evidence.md`。
 
+## I. Redis 与登录限流
+
+### I1. 为什么选择 StringRedisTemplate？【高频】
+
+**答：** 当前 Redis 协议都是字符串计数、Hash 字段和 JSON 快照，`StringRedisTemplate` 让数据格式显式且便于排查。项目没有配置通用 Object 序列化或 Redisson；如果以后缓存复杂对象，也应为具体数据定义版本化协议。
+
+### I2. Lettuce 和 Jedis 的主要区别是什么？【追问】
+
+**答：** Lettuce 基于 Netty，连接线程安全并支持同步、异步和响应式 API；Jedis 传统模型通常按连接使用并配合连接池。当前 Spring Boot starter 自动选择 Lettuce 7.5.2，不代表任何场景下都绝对优于 Jedis，仍要按并发和运维要求选择。
+
+### I3. 为什么首次计数和 EXPIRE 必须原子？【高频】
+
+**答：** 客户端先 INCR、再 EXPIRE 时如果中间崩溃，Key 可能永久不过期。项目的固定窗口 Lua 首次直接 `SET ... EX`，把计数和 TTL 放在一次脚本执行内；这只保证单 Redis Key 内部原子性。
+
+### I4. Redis Lua 如何保证原子性？【高频】
+
+**答：** Redis 在执行脚本时不会穿插其他命令，因此脚本中的读取、判断和写入对其他请求表现为一次原子操作。当前每次脚本只访问一个 Key；Lua 原子性不能扩展为 Redis 与 MySQL 的共同事务。
+
+### I5. 固定窗口有什么边界突发问题？【追问】
+
+**答：** 客户端可在上一个窗口末尾用完额度，再在新窗口开始立即用完下一份额度，短时间流量接近两倍。当前接受实现简单和低状态成本的取舍，没有声称是滑动窗口；若风险提高可评估滑动日志或令牌桶。
+
+### I6. 为什么先检查 IP 再检查用户名？【高频】
+
+**答：** IP 桶先挡住单来源对大量用户名的尝试，用户名桶再约束跨 IP 针对同一身份的请求。当前用户名桶拒绝时 IP 已计数，这是明确的顺序语义；两个桶不是一个原子事务。
+
+### I7. 为什么成功登录也计数？【高频】
+
+**答：** 限制的是登录端点资源消耗和请求频率，不是只统计失败密码。项目 HTTP 测试证明成功登录到达阈值后也返回429；若要账户失败锁定，需要独立失败状态、解锁和安全策略。
+
+### I8. 为什么 Validation 失败不计数？
+
+**答：** Spring 在调用 Controller 方法前完成 JSON 解析和 Bean Validation，失败时限流器尚未执行。项目同时用 Controller Mock 和真实 HTTP 测试证明没有创建 Key；如果要在更早阶段计数，需要 Filter 层设计，但当前没有实现。
+
+### I9. 为什么不能直接信任 X-Forwarded-For？【高频】
+
+**答：** 没有可信代理边界时客户端可以自行伪造 Header 并绕过 IP 桶。当前只用 `remoteAddr`，测试也证明改变转发 Header 不影响桶；生产接入受控网关后才应按代理链和清洗规则解析真实 IP。
+
+### I10. fail-closed 和 fail-open 如何选择？【追问】
+
+**答：** fail-closed 在 Redis 故障时拒绝继续登录，降低绕过保护风险但牺牲可用性；fail-open 相反。当前登录和幂等创建都选择 fail-closed，尚未验证 Sentinel、Cluster 或高可用降级，生产需结合威胁模型和SLA调整。
+
+### I11. 无盐 SHA-256 为什么不是匿名化？【追问】
+
+**答：** 相同输入总得到相同摘要，IP、常见用户名等低熵输入可被字典枚举。当前摘要只减少 Redis 界面的明文暴露，不能替代访问控制、网络隔离、加盐/HMAC或数据保留治理。
+
+### I12. Redis 健康为 UP 能证明什么？【高频】
+
+**答：** 它说明探测时应用能够连接 Redis 并完成健康检查。它不能证明 Lua 业务分支、TTL、Key清理、持久化恢复或 Redis/MySQL一致性正确，所以项目另有真实 Redis 状态机和 HTTP 测试。
+
+**代码定位：** `LoginRateLimitProperties`、`LoginRateLimitKeyGenerator`、`RedisLoginRateLimiter`、`fixed_window_rate_limit.lua`、`LoginRateLimitHttpIntegrationTest`。
+
+## J. 创建幂等与跨存储一致性
+
+### J1. 幂等和分布式锁有什么区别？【高频】
+
+**答：** 锁主要回答同一时刻谁能执行，幂等还要定义完成后重复请求返回什么、不同请求能否复用 Key。当前实现有请求指纹、PROCESSING协调和SUCCEEDED响应重放，因此不是通用分布式锁。
+
+### J2. 为什么 Key 要按 JWT sub 隔离？【高频】
+
+**答：** 客户端 Key 只在当前认证用户范围内有意义，不同用户可能合法选择相同值。项目用 JWT `sub` 和客户端 Key 共同生成摘要，防止用户之间相互阻塞或重放；可信用户 ID 不能来自请求体。
+
+### J3. 请求指纹为什么不能简单用分隔符拼接？【追问】
+
+**答：** 字段本身可能包含分隔符、换行或相似组合，简单拼接会产生边界歧义。项目写入字段名、UTF-8字节长度和内容后再哈希，并有专门测试验证不同字段组合不会因分隔符碰撞。
+
+### J4. ownerToken 解决什么问题？【高频】
+
+**答：** 它证明哪个处理尝试拥有当前 PROCESSING。Key 过期后新请求可能成为新 owner，旧请求必须无法完成或释放新记录；complete和release Lua都校验 state、fingerprint和ownerToken。
+
+### J5. PROCESSING 和 SUCCEEDED 分别表示什么？
+
+**答：** PROCESSING 表示一个 owner 已取得执行权，保存指纹和ownerToken；SUCCEEDED表示第一次业务成功并保存了TicketResponse快照。当前没有 FAILED 状态，业务失败由当前owner释放，过期由TTL表达。
+
+### J6. 为什么重复请求不刷新 TTL？【追问】
+
+**答：** 刷新会让攻击者或持续重试无限延长处理占用和成功数据寿命。当前IN_PROGRESS、payload mismatch和成功重放都不刷新正常TTL；脚本只在发现异常无TTL状态时修复处理TTL。
+
+### J7. 为什么协调器不能加外层 @Transactional？【高频】
+
+**答：** 外层事务可能让Service加入后延迟MySQL提交，协调器先把Redis标记成功，方法结束时数据库才提交；若最终提交失败会出现Redis成功但无工单。当前Service先完成本地事务，再执行Redis complete，并披露反向窗口。
+
+### J8. 为什么 Service 成功后 complete 失败不能释放？【高频】
+
+**答：** Service正常返回时MySQL可能已经提交。此时删除PROCESSING会让客户端立即重新acquire并再插入；保留到TTL虽不能消除重复风险，但不会主动扩大为立即重试窗口。
+
+### J9. 为什么成功重放不重新查询数据库？
+
+**答：** 幂等语义是重放第一次创建响应，而工单之后可能已更新状态。项目保存并反序列化原TicketResponse，不再次调用Service或selectById；响应DTO版本变化时需考虑快照兼容。
+
+### J10. 相同 Key 不同 payload 为什么返回冲突？【高频】
+
+**答：** 一个幂等Key只能代表一个逻辑操作，不同请求复用会使客户端无法判断哪个结果有效。项目比较请求指纹并返回HTTP409/40907，不覆盖旧状态，也不泄露旧指纹。
+
+### J11. 当前 Redis 方案能保证 exactly-once 吗？【高频】
+
+**答：** 不能。MySQL提交后到Redis complete之间存在崩溃、序列化和连接失败窗口，TTL到期或Redis丢失后仍可能再次创建。当前准确定位是有限窗口协调、冲突识别和响应重放。
+
+### J12. 数据库唯一约束和 Redis 分别解决什么？【追问】
+
+**答：** 数据库唯一约束适合作为持久重复插入兜底，Redis擅长低延迟PROCESSING协调和响应缓存。两者可以互补，但并存不等于共同事务；当前项目只有Redis层，没有MySQL幂等唯一约束。
+
+### J13. 为什么在 tickets 表加唯一字段仍不完整？【追问】
+
+**答：** 唯一索引能防重复行，却不能自然保存第一次HTTP响应，还要处理历史NULL、冲突后的事务状态和响应版本。工单以后改变时查询当前行也不等于重放创建时响应，因此独立幂等表通常职责更清晰。
+
+### J14. 什么情况下需要独立幂等记录表？【高频】
+
+**答：** 当重复创建损失严重、需要跨Redis故障永久防重、长期重放、审计，或客户端重试超过TTL时应升级。推荐让幂等占用和工单创建处于同一MySQL事务，再把Redis作为快速协调和缓存层。
+
+### J15. Outbox 在什么场景才有价值？【追问】
+
+**答：** 当创建工单还要可靠发送消息、通知或调用跨服务副作用时，Outbox可让业务数据和待发送事件同库提交，再异步投递；消费者仍要幂等。当前创建只涉及本地MySQL写入，为它提前引入消息体系成本过高。
+
+**代码定位：** `CreateTicketIdempotencyCoordinator`、`RedisCreateTicketIdempotencyStore`、三个幂等Lua脚本、`CreateTicketIdempotencyHttpIntegrationTest`、`docs/p8_create_ticket_idempotency_decision.md`。
+
 ## 标记说明
 
 - **高频**：建议能在30～60秒内直接回答；
 - **追问**：通常出现在基础回答之后，重点考察边界和权衡；
 - 回答中的未来方案是演进方向，不代表当前已经实现。
+
+当前按 `### A1.` 至 `### J15.` 的问题标题重新统计：
+
+- 总题数：114；
+- 标记“高频”：47；
+- 标记“追问”：23。

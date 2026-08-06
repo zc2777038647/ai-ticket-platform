@@ -12,6 +12,35 @@
 - [ ] 我能说出登录成功响应的 Token 类型和有效期。
 - [ ] 我能说明 `/api/auth/me` 的数据来自哪里。
 
+### Redis 基础掌握
+
+- [ ] 我能说明 Spring Boot 如何自动配置 LettuceConnectionFactory 和 StringRedisTemplate。
+- [ ] 我能区分 Redis String、Hash 与本项目中的使用场景。
+- [ ] 我能解释 TTL、INCR 和 SETNX 的语义及测试证据。
+- [ ] 我能解释单 Key Lua 的原子边界。
+- [ ] 我能说明为什么项目没有通用 Object 序列化和 Redisson。
+
+### 登录限流掌握
+
+- [ ] 我能说出 IP 60秒20次、规范化用户名60秒10次的默认口径。
+- [ ] 我能说明为什么先检查 IP，再检查 username。
+- [ ] 我能说明成功、失败、Validation失败分别是否计数。
+- [ ] 我能解释 `Retry-After` 和 HTTP 429 / 42900。
+- [ ] 我能说明 IP 来自 remoteAddr，以及为什么当前不信任 X-Forwarded-For。
+- [ ] 我能解释 fail-closed 的安全和可用性取舍。
+- [ ] 我能解释固定窗口的边界突发问题。
+
+### 创建幂等掌握
+
+- [ ] 我能说明 Idempotency-Key 的8～128字符边界和开启/关闭行为。
+- [ ] 我能解释 JWT sub 用户作用域、请求指纹和 ownerToken。
+- [ ] 我能画出 PROCESSING、SUCCEEDED 两态及 acquire、complete、release。
+- [ ] 我能说明相同请求重放、处理中和payload mismatch协议。
+- [ ] 我能解释业务失败为何release，Service成功后的Redis失败为何不release。
+- [ ] 我能说明成功响应重放为什么不重新查询数据库。
+- [ ] 我能说出MySQL提交后的三个Redis一致性窗口。
+- [ ] 我不会把当前方案称为 exactly-once、永久防重或分布式锁。
+
 ### 工单创建与查询
 
 - [ ] 我能说明创建工单的请求和响应字段。
@@ -53,6 +82,10 @@
 - [ ] 我能解释为什么不能异步或用 REQUIRES_NEW 写强一致日志。
 - [ ] 我能说明日志为何只有 created_at，没有 updated_at。
 - [ ] 我能承认日志不是数据库物理不可篡改。
+- [ ] 我能区分 Redis Lua 原子性和 Redis/MySQL 跨存储一致性。
+- [ ] 我能解释无盐 SHA-256 摘要为什么不等于匿名化。
+- [ ] 我能解释协调器为什么没有外层数据库事务。
+- [ ] 我能说明当前用户名限流规范化与 AuthService 查询规范化的差异。
 
 ## 3. 第三轮：能定位代码
 
@@ -74,6 +107,11 @@
 - [ ] 找到 standalone MockMvc 测试。
 - [ ] 找到真实 JWT Security 测试。
 - [ ] 找到事务原子性外键故障测试。
+- [ ] 找到 `RedisLoginRateLimiter` 和 `fixed_window_rate_limit.lua`。
+- [ ] 找到 `RedisCreateTicketIdempotencyStore` 和 `CreateTicketIdempotencyCoordinator`。
+- [ ] 找到 acquire、complete、release 三个幂等 Lua 脚本。
+- [ ] 找到真实 Redis 基础、限流和幂等 Store 集成测试。
+- [ ] 找到登录限流和创建幂等 HTTP 集成测试。
 
 ### 关键相对路径
 
@@ -83,6 +121,9 @@ src/main/java/com/xiaoyang/aiticketplatform/service/impl
 src/main/java/com/xiaoyang/aiticketplatform/config/SecurityConfig.java
 src/main/java/com/xiaoyang/aiticketplatform/security
 src/main/java/com/xiaoyang/aiticketplatform/common/ErrorCode.java
+src/main/java/com/xiaoyang/aiticketplatform/ratelimit
+src/main/java/com/xiaoyang/aiticketplatform/idempotency
+src/main/resources/redis
 src/main/resources/db/migration
 src/test/java/com/xiaoyang/aiticketplatform
 ```
@@ -126,6 +167,30 @@ src/test/java/com/xiaoyang/aiticketplatform
 涉及层次：Service 业务语义、返回 DTO、日志策略、40904是否保留、单元/HTTP/安全测试和 API 文档。
 
 验收点：明确重复请求是否新增日志；并发冲突仍可区分；不能只删除异常分支而不更新契约和测试。
+
+### 练习7：调整登录限流窗口参数
+
+不提供完整答案。分析配置绑定、两个维度、测试属性覆盖和固定窗口语义；验收时确认首次TTL、阈值拒绝和正常请求不刷新TTL。
+
+### 练习8：为限流响应增加剩余窗口说明
+
+不提供完整答案。先定义客户端真正需要的字段，再分析暴露剩余时间、计数、用户名或IP信息的隐私风险；保持429和Retry-After契约兼容。
+
+### 练习9：为另一个创建类业务设计幂等
+
+不提供完整答案。明确认证主体、Key作用域、请求指纹、状态机、响应快照、TTL、业务失败释放和跨存储窗口，不能复制类名后就称完成。
+
+### 练习10：把成功响应 TTL 改为配置策略
+
+不提供完整答案。考虑配置Validation、环境覆盖、旧Key不受新配置影响、响应版本兼容和TTL过长的内存成本。
+
+### 练习11：设计 MySQL 幂等记录表
+
+只输出表结构和事务时序，不实施迁移。验收点包括用户作用域唯一约束、请求指纹、状态、响应快照、过期清理，以及如何与工单创建处于同一事务。
+
+### 练习12：设计可信代理后的 IP 解析
+
+不提供完整答案。明确可信代理名单、Header清洗、代理链顺序、直连请求和伪造Header测试；不能直接取第一个X-Forwarded-For。
 
 ## 5. 第五轮：能排查问题
 
@@ -185,6 +250,46 @@ src/test/java/com/xiaoyang/aiticketplatform
 
 排查方向：当前 `/me` 只读 Token claims，不查询数据库；确认 Token 签发时间和 TTL。当前尚无角色修改和撤销功能，演进需加入停用/版本或实时校验策略。
 
+### 场景15：Redis 连接失败
+
+排查 host、port、容器健康、`REDIS_PORT` 是否一致和连接超时。确认当前登录与启用幂等的创建链路都是 fail-closed，不要为了恢复测试而清空卷。
+
+### 场景16：Lua 返回 null 或非法状态
+
+排查脚本返回类型、Spring Data Redis result type、参数顺序和损坏记录。当前 Java 层应抛内部异常，不应伪造允许或成功结果。
+
+### 场景17：限流计数 Key 没有 TTL
+
+排查是否绕过脚本直接 INCR、首次SET EX是否执行、Key是否是旧数据。Lua对异常无TTL状态会补TTL，但正常请求不得刷新固定窗口。
+
+### 场景18：X-Forwarded-For 绕过限流
+
+当前代码不读取该Header；若部署配置让容器自动改写remoteAddr，检查可信代理边界和Header清洗。不能让公网客户端直接决定来源IP。
+
+### 场景19：username桶与登录查询行为不一致
+
+限流规范化为trim加`Locale.ROOT`小写，AuthService当前只小写。排查首尾空格请求为何进入同一限流桶但登录查询不同；本阶段记录现状，不在文档任务中修代码。
+
+### 场景20：相同请求被识别为 payload mismatch
+
+核对四个指纹字段、枚举名称、字符编码和客户端是否改变空格或文本。不要记录或返回实际指纹，也不要用简单分隔符拼接替代长度编码。
+
+### 场景21：ownerToken 校验失败
+
+确认 acquire、complete、release 是否传递同一次处理生成的token，Key是否过期后被新owner占用。stale owner失败是保护行为，不能强制覆盖。
+
+### 场景22：工单已创建但 Redis 仍为 PROCESSING
+
+考虑MySQL提交后进程崩溃、响应序列化失败或Redis complete失败。此时不能直接release并重试；先确认数据库事实和TTL，当前方案可能在过期后重复创建。
+
+### 场景23：重放响应反序列化失败
+
+排查SUCCEEDED response是否损坏、TicketResponse结构是否变更和ObjectMapper兼容性。当前应返回50000，不重新调用Service伪造成功。
+
+### 场景24：Redis 测试 Key 残留
+
+检查测试是否只跟踪精确生成的Key、`@AfterEach`是否执行及异常是否发生在登记前。禁止用生产前缀通配删除，修复时只清理明确测试Key。
+
 ## 6. 一周复习计划
 
 每天约60～90分钟，建议结构为“20分钟阅读、20分钟口述、20～40分钟动手”。
@@ -192,7 +297,7 @@ src/test/java/com/xiaoyang/aiticketplatform
 ### 第1天：项目结构和接口
 
 - 阅读：README、`AuthController`、`TicketController`、DTO 和 ErrorCode。
-- 口述：30秒项目介绍；9个业务端点；三角色权限矩阵。
+- 口述：30秒项目介绍；9个业务端点；三角色权限矩阵；两个P8保护入口。
 - 动手：不看文档画 Controller→Service→Mapper→MySQL 调用图。
 - 自测：能在3分钟内找到任意端点的请求、响应、主要错误码。
 
@@ -210,6 +315,8 @@ src/test/java/com/xiaoyang/aiticketplatform
 - 动手：手写一份不含真实值的 claims 表和认证链。
 - 自测：能清楚回答签名不等于加密、当前为何不能撤销Token。
 
+补充：串联JWT `sub` 如何成为工单所有权、限流以外的认证身份以及创建幂等用户作用域。
+
 ### 第4天：权限和所有权
 
 - 阅读：SecurityConfig、Converter、401/403 Handler、所有权 Service 和安全测试。
@@ -224,12 +331,16 @@ src/test/java/com/xiaoyang/aiticketplatform
 - 动手：手写首次指派和重新指派的伪 SQL，分析两个并发请求结果。
 - 自测：能说明事务为什么不能替代条件更新。
 
+补充：对比数据库旧值条件更新、Redis ownerToken和幂等状态机，说明三者不是同一种“锁”。
+
 ### 第6天：事务日志与测试
 
 - 阅读：TicketOperationLog、V6、appendOperationLog、Atomicity测试、testing_evidence。
 - 口述：业务UPDATE→日志INSERT；为什么不用异步/REQUIRES_NEW。
 - 动手：画出外键故障注入和回滚验证时序。
-- 自测：能准确说出45类、329项的分层，且不都称端到端。
+- 补充阅读：RedisInfrastructure、RedisLoginRateLimiter、幂等Store/Coordinator及其集成测试。
+- 口述：单Key Lua原子性、Redis/MySQL三个窗口和fail-closed。
+- 自测：能准确说出60类、448项的分层，且不都称端到端。
 
 ### 第7天：完整模拟讲解
 
@@ -245,7 +356,7 @@ src/test/java/com/xiaoyang/aiticketplatform
 - [ ] 我能在30秒内说明做了什么、两个重点设计和测试结果。
 - [ ] 我能在1分钟内覆盖功能、安全、并发、事务和测试。
 - [ ] 我能在3～5分钟内完整讲解且不过度展开。
-- [ ] 我不会把 AI、RAG、Redis、微服务或生产部署说成已实现。
+- [ ] 我会准确说Redis限流和有限窗口幂等已实现，但不会把缓存、Cluster、exactly-once、AI、微服务或生产部署说成事实。
 - [ ] 我不会虚构 QPS、响应时间、覆盖率或性能提升。
 
 ### 深度
@@ -255,12 +366,13 @@ src/test/java/com/xiaoyang/aiticketplatform
 - [ ] 我能区分条件更新、乐观锁和事务。
 - [ ] 我能解释真实数据库回滚证据。
 - [ ] 我能承认 Token 撤销、用户停用、压力测试等边界。
+- [ ] 我能承认可信代理、Redis高可用、MySQL持久化幂等和跨存储崩溃恢复尚未验证。
 
 ### 代码与演示
 
 - [ ] 我能现场定位 Controller、Service、SecurityConfig、ErrorCode 和迁移。
 - [ ] 我能找到一个单元测试、一个 MVC 测试和一个真实 MySQL 测试。
-- [ ] MySQL 容器能健康启动，应用本地配置与密钥已安全准备。
+- [ ] MySQL 和 Redis 容器能健康启动，应用本地配置与密钥已安全准备。
 - [ ] 演示账户均为测试数据，不暴露密码、哈希、Secret或完整Token。
 - [ ] 我能在日志查询 API 不存在的前提下，用只读 SQL或测试展示日志。
 - [ ] 我已运行 `mvn test` 并确认实际结果，而不是引用预计值。

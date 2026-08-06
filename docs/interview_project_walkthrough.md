@@ -1,116 +1,101 @@
 # 项目面试讲解稿
 
-本文用于口头练习。讲解时应根据面试官关注点取舍，不需要逐字背诵。
+本文用于口头练习。讲解时先给结论，再结合代码和测试，最后主动说明边界；不需要逐字背诵。
 
-## 1. 30秒版本
+## 1. 30 秒版本
 
-我做的是一个基于 Spring Boot 的工单平台后端，目前完成注册登录、JWT认证、三角色授权、工单分页、状态流转、管理员指派和操作日志。两个重点设计是请求级权限与对象级所有权分离，以及通过条件更新和同事务日志保证并发冲突可识别、业务与审计一起成功或回滚。项目有45个测试类、329项分层测试，并使用真实 MySQL 验证关键链路。
+我做的是一个 Spring Boot 工单平台后端，完成了注册登录、JWT 三角色授权、工单分页和状态流转、管理员指派及事务操作日志。状态和指派使用旧值条件更新，权限同时覆盖接口角色和 USER 对象所有权。P8 又基于 Redis Lua 增加登录双维度固定窗口限流和用户作用域创建幂等，支持处理中冲突与成功响应重放。项目目前有60个测试类、448项测试，并用真实 MySQL 和 Redis 验证关键链路；AI 能力仍未接入。
 
-## 2. 1分钟版本
+## 2. 1 分钟版本
 
-这个项目是一个单体 Java 工单后端，目标是先建立可靠的业务、身份和审计基础，再为后续智能分类等能力预留演进空间。它使用 Spring Boot、MyBatis-Plus、MySQL 和 Flyway，实现注册登录、工单创建、详情、我的工单、条件分页、状态流转和管理员指派。安全方面用 BCrypt 保存密码哈希，以 HS256 JWT 建立 USER、AGENT、ADMIN 三角色授权；SecurityFilterChain 处理接口级权限，Service 再按 `creator_user_id` 处理 USER 的对象所有权。状态和指派都使用旧值条件 UPDATE，避免并发请求静默覆盖；成功后同步写操作日志，并在同一事务中提交。当前通过45个测试类、329项自动化测试验证 Validation、Service、MVC、安全链路和真实 MySQL 回滚场景。
+这是一个单体 Java 工单后端，目标是先建立可靠业务底座，再支持后续智能分类等能力。项目使用 Spring Boot、MyBatis-Plus、MySQL 和 Flyway，实现注册登录、创建查询分页、顺序状态流转、ADMIN 指派和追加式日志；BCrypt、HS256 JWT 与 Spring Security 建立 USER、AGENT、ADMIN 三角色权限，Service 再依据 `creator_user_id` 做对象级所有权。
 
-## 3. 3～5分钟完整版本
+并发方面，状态和处理人更新都把旧值放进 SQL 条件，业务 UPDATE 与日志 INSERT 在同一 MySQL 事务中提交。P8 接入 Spring Data Redis 和 Lettuce：登录用单 Key Lua 对 IP 和规范化用户名做固定窗口限流；创建工单用 JWT `sub` 隔离 `Idempotency-Key`，结合请求指纹、ownerToken 和 `PROCESSING/SUCCEEDED` 状态重放第一次成功响应。这个幂等只有有限 TTL，Redis 和 MySQL 不在同一事务，因此不宣称 exactly-once。60个测试类、448项测试覆盖单元、MVC、安全、真实 MySQL、真实 Redis 和 HTTP 链路。
+
+## 3. 3～5 分钟完整版本
 
 ### 第一段：项目目标
 
-我做的是一个单体 Java 工单平台后端。当前重点不是直接接 AI 模型，而是先把用户身份、权限、工单状态、处理人指派和操作审计这些基础能力做好。因为后续无论接工单分类、优先级建议还是回复草稿，都必须建立在可信身份和稳定业务状态上。
+这是一个单体 Java 工单平台后端。当前先完成账户、权限、状态、指派、审计以及入口可靠性保护，因为未来即使加入 AI 分类或回复建议，也不能绕过可信身份和业务规则。当前没有模型调用、RAG 或 Agent。
 
-当前系统完成了注册、登录、当前用户、创建工单、详情查询、我的工单、全局条件分页、状态更新和管理员指派。AI 分类、RAG、Agent、Redis、消息队列都还没有实现，我会把它们放在 Roadmap，而不是当成当前成果。
+### 第二段：分层与数据模型
 
-### 第二段：架构和数据模型
+请求先经过 Spring Security Filter Chain，再进入 Controller；Controller 处理 HTTP、Validation 和认证主体，Service 处理业务规则与 MySQL 事务，MyBatis-Plus Mapper 访问数据库。核心有 users、tickets、ticket_operation_logs 三张表，Flyway V1～V6 保留演进历史。
 
-项目采用常规分层：请求先经过 Spring Security Filter Chain，再进入 Controller；Controller 负责 HTTP 参数和认证主体，Service 负责业务规则、所有权和事务，Mapper 基于 MyBatis-Plus 访问 MySQL。
+Redis 由 Spring Boot 自动配置 LettuceConnectionFactory 和 StringRedisTemplate。项目没有 Redisson、通用 Object 序列化或已经完成的工单缓存；Redis 当前只承载登录限流和创建幂等临时状态。
 
-核心有三张表。`users` 保存用户名、BCrypt 哈希、显示名和角色；`tickets` 保存工单内容、可信创建者 ID、可空处理人 ID、优先级和状态；`ticket_operation_logs` 保存状态或指派变更的操作者、前值、后值和时间。数据库通过 Flyway V1～V6 演进，没有直接修改已经执行的旧迁移。
+### 第三段：JWT 与权限
 
-### 第三段：认证授权
+注册使用 BCrypt strength 10，只保存哈希。登录成功签发两小时 HS256 Access Token，包含 sub、username、role 和 jti。Resource Server 校验签名、issuer、时间和必要 claims，并把角色转换为 Spring Authority。
 
-注册时密码通过 BCrypt strength 10 编码，数据库只保存哈希；登录时使用 `matches` 校验，然后签发有效期两小时的 HS256 Access Token。Token 的 `sub` 是用户 ID，另外包含 username、role 和 jti。Resource Server 会验证签名、issuer、时间以及这些必要 claims，再把 role 转为 `ROLE_USER`、`ROLE_AGENT` 或 `ROLE_ADMIN`。
+授权分两层：SecurityFilterChain 判断哪种角色可以调用某类接口；TicketService 再判断 USER 是否拥有具体工单。USER 查询他人工单返回404，减少资源存在性泄露。`creatorName` 只是展示文本，可信创建者和日志操作者都来自 JWT `sub`。
 
-授权分成两层。SecurityFilterChain 处理请求级规则，比如 USER 不能全局分页或更新状态，只有 ADMIN 能指派。对象级规则放在 TicketService：USER 查询详情时使用工单 ID 和 `creator_user_id` 一起查询，所以不能读取他人的工单。未命中统一返回404而不是403，避免确认资源是否存在。请求中的 `creatorName` 只是展示文本，不能作为授权依据，可信创建者来自 JWT `sub`。
+### 第四段：条件更新与事务审计
 
-### 第四段：业务难点和并发
+状态只允许 `OPEN → IN_PROGRESS → RESOLVED → CLOSED`。状态更新 SQL 同时匹配 ID 和旧状态；首次指派要求旧处理人为 NULL，重新指派匹配旧处理人 ID。若另一个请求已经修改，affectedRows 为0并返回明确冲突，不会静默覆盖。
 
-工单状态不是任意修改，而是明确状态机：`OPEN → IN_PROGRESS → RESOLVED → CLOSED`，不允许跳跃、逆向或相同状态更新。
+条件 UPDATE 成功后同步 INSERT 操作日志，两次写入位于同一 `@Transactional`。真实 MySQL 测试用不存在的 operator ID 触发日志外键失败，验证状态或处理人回滚且没有日志残留。条件更新解决并发前置条件，事务解决业务写和日志写的原子性，两者不能混为一谈。
 
-只在 Java 中先查再判断还不够，因为两个请求可能同时读到同一个旧状态。所以状态更新的 SQL 条件同时包含 ID 和旧状态。如果另一个请求已经更新，当前 UPDATE 影响行数就是0，Service 返回状态冲突，而不是覆盖新状态。
+### 第五段：Redis 登录限流
 
-指派使用相同思想。首次指派要求 `assignee_user_id IS NULL`，重新指派要求数据库处理人仍等于刚才读取的旧处理人。这样可以区分正常成功、重复指派和并发变化。我没有直接使用无条件 `updateById`，因为它无法表达“只有旧值没有变化时才写入”的前置条件。
+登录请求通过 JSON 和 Validation 后进入 Controller，先按 `remoteAddr` 检查 IP 桶，再按 trim + `Locale.ROOT` 小写后的用户名检查第二个桶。默认 IP 60秒20次、用户名60秒10次，成功和失败登录都计数。
 
-### 第五段：事务与操作审计
+固定窗口 Lua 在首次请求时原子写入计数和 TTL，后续正常请求不刷新窗口；超限返回 HTTP 429 / 42900 和正数 `Retry-After`。未建立可信代理边界，所以不信任 `X-Forwarded-For`。Redis 故障时 fail-closed，不继续执行 AuthService。它不是账户锁定、滑动窗口或令牌桶，窗口边界仍可能产生突发。
 
-状态或指派条件 UPDATE 成功后，Service 会同步插入一条操作日志。状态日志记录旧状态和新状态；指派日志记录旧处理人 ID 和新处理人 ID。操作者来自 JWT `sub`，所以指派日志的操作者是执行操作的 ADMIN，目标 AGENT 只是 after value。
+### 第六段：创建工单幂等
 
-业务 UPDATE 和日志 INSERT 在同一个 `@Transactional` 中：两次写入都成功才提交。日志放在业务条件 UPDATE 之后，是为了避免条件更新失败时留下虚假日志；日志失败又必须让业务 UPDATE 回滚，所以没有使用异步或 `REQUIRES_NEW`。
+启用时 `POST /api/tickets` 需要 8～128 字符的 `Idempotency-Key`。JWT `sub` 与 trim 后的 Key 经过长度编码和 SHA-256 生成用户作用域 Redis Key；创建请求四个字段生成请求指纹；随机 ownerToken 标识本次处理者。
 
-我用真实 MySQL 做了故障注入：传入一个确认不存在但为正数的操作者 ID，让日志 INSERT 触发外键异常。测试验证状态仍为 OPEN、处理人仍为 NULL，并且没有日志残留。这证明的是业务与日志原子性。条件 UPDATE 解决的是并发覆盖，两者不是同一个问题。
+acquire Lua 首次写 `PROCESSING`。相同 Key 和指纹仍在处理时返回40906与 `Retry-After`；不同指纹返回40907；成功后 Hash 转为 `SUCCEEDED`，保存序列化的 `TicketResponse`。相同请求再次到来直接重放第一次 DTO，不查询数据库，不刷新成功 TTL。ownerToken 防止旧请求完成或删除新 owner 的记录。
 
-### 第六段：测试和边界
+协调器没有数据库事务，TicketService 的 MySQL 事务先提交，之后 Redis 才 `complete`。如果 Service 业务失败，当前 owner 可以 release；但 Service 已成功后若序列化或 Redis 完成失败，不能释放 PROCESSING，否则重试可能立即插入第二张工单。Redis 与 MySQL 之间仍有崩溃窗口，所以当前只叫有限窗口幂等，不是 exactly-once，也没有 MySQL 持久化幂等表。
 
-项目当前有45个测试类、329项测试实例。它们不是329个端到端测试，而是分层覆盖 DTO Validation、Service/Mockito、standalone MockMvc、Mapper 与真实 MySQL、HTTP 全链路、Security Filter Chain，以及事务和条件更新场景。
+### 第七段：测试证据和边界
 
-当前不足主要有两个方面。第一，只有 HS256 Access Token，没有 Refresh Token、撤销、用户停用和登录限流；第二，还没有真实多线程 HTTP 竞态、压力测试、操作日志查询和 AI 能力。下一步我会先收紧未来端点的安全默认规则，再评估日志查询、分配给我的工单和智能分类等功能。
+项目有60个 Surefire 测试类、448项测试。除了 Validation、Mockito、standalone MockMvc、Security 和真实 MySQL，还用真实 Redis验证 PING、TTL、INCR、SETNX、固定窗口和幂等 Lua状态机；HTTP 测试证明相同请求重放时数据库只有一张工单，不同用户同 Key 隔离。
+
+协调器单元测试验证 Redis 获取失败 fail-closed、业务失败释放，以及 Service 成功后 complete 失败不释放。但没有通过杀进程或断网做破坏性崩溃测试，也没有高并发压测、多实例、Sentinel/Cluster、MySQL 持久化幂等或性能数据。
 
 ## 4. 面试官打断时的跳转句
 
-- “这部分最关键的是，请求级权限和对象级所有权是两层机制。”
-- “这个问题我当时主要从业务合法性和数据库并发条件两个层面处理。”
-- “这里的条件更新和事务不是同一件事，我分别说明一下。”
-- “如果您更关注数据库，我可以展开讲 V1～V6 和外键取舍。”
-- “如果您更关注安全，我可以从 JWT 验证链和401/403边界展开。”
-- “这个场景我不只做了 Mock 测试，还用真实 MySQL 验证了最终状态。”
-- “当前版本没有实现这一点，我可以说明现有边界和下一步演进方案。”
-- “这项数据目前没有性能测试证据，所以我不会给出 QPS 或提升百分比。”
+- “这一段最关键的是 Redis 单 Key 原子性不等于 Redis 与 MySQL 强一致。”
+- “如果您关注 Java，我可以展开讲 Lua、事务和条件 UPDATE 的职责边界。”
+- “如果您关注安全，我可以说明 remoteAddr、代理信任和 fail-closed 取舍。”
+- “幂等不是简单加锁，我还比较请求指纹并重放第一次成功响应。”
+- “当前版本没有实现这一点，我可以说明现有边界和演进触发条件。”
+- “这项数据没有压测证据，所以我不会给出 QPS 或性能提升百分比。”
 
 ## 5. 不同岗位的讲解重点
 
 ### 5.1 Java 后端岗位
 
-重点顺序：
+重点说明：
 
-1. Controller、Service、Mapper 分层；
-2. DTO 与 Entity 隔离；
-3. Flyway 数据演进和外键；
-4. 条件 UPDATE、affectedRows 和业务异常；
-5. `@Transactional` 原子性；
-6. 单元测试与真实数据库测试如何互补。
-
-建议深入回答为什么不用无条件 `updateById`、为什么 Service 不直接读 `SecurityContext`、为什么已执行迁移不能修改。
+1. Controller、Service、Mapper 和 Redis 协调层的职责；
+2. 单 Key Lua 为什么能避免多命令中间状态；
+3. 条件 UPDATE 与 MySQL 事务分别解决什么问题；
+4. 为什么协调器不能用外层 `@Transactional` 包住 Redis 与 MySQL；
+5. Service 成功后 Redis 失败为何不释放 PROCESSING；
+6. 请求级授权、对象级所有权和用户作用域幂等。
 
 ### 5.2 AI 应用后端岗位
 
-先说明当前完成的是可靠工单业务底座：可信身份、权限、状态机、处理人和审计日志。后续计划接入工单分类、优先级建议和回复草稿，但必须保留人工确认、权限校验和操作可追踪性。
-
-不要说已经实现模型调用、RAG 或 Agent。可以重点讲为什么业务状态和审计是接入 AI 前的必要边界，以及未来模型输出不能直接绕过 Service 业务规则。
+重点说明当前先建立可靠业务底座：可信身份、权限、状态机、审计、登录限流和创建幂等。限流和幂等可以保护未来高成本模型调用，但当前尚未接入模型。未来模型输出仍必须经过 Service 校验、人工确认和可追踪操作，不能直接写数据库。
 
 ### 5.3 测试开发岗位
 
-重点顺序：
+重点说明真实 Redis 与 Mock 的互补、Lua 状态机分支、HTTP 成功响应重放、不同用户 Key 隔离、TTL 不刷新、故障注入和精确 Key 清理。主动指出 Redis/MySQL 崩溃窗口目前只做了部分单元故障注入，没有进行停止容器或杀进程的破坏性测试。
 
-1. 329项测试如何不重复分层；
-2. Mockito 验证业务交互与内存时序；
-3. standalone MockMvc 与真实 Security Filter Chain 的差异；
-4. 唯一测试前缀和事务回滚隔离；
-5. 外键故障注入证明事务回滚；
-6. 当前没有压力、容灾和真实多线程竞态测试。
+## 6. 本地演示顺序
 
-## 6. 本地项目演示顺序
+1. 确认 MySQL 和 Redis 容器均 healthy；
+2. 注册测试 USER，并登录获取占位展示的 Access Token；
+3. 重复失败登录展示 HTTP 429、42900 和 `Retry-After`；
+4. 使用合法 `Idempotency-Key` 创建工单；
+5. 相同用户、相同 Key 和请求再次调用，展示相同 TicketResponse 且数据库只有一条记录；
+6. 相同 Key 改变请求字段，展示 HTTP 409 / 40907；
+7. 使用 ADMIN 指派、AGENT 更新状态，并通过只读 SQL或测试展示操作日志；
+8. 展示 `mvn test` 的60类、448项、0失败结果；
+9. 最后主动说明 MySQL 提交后 Redis complete 前的三个一致性窗口。
 
-### 准备
-
-确认 MySQL 容器健康，启动应用。准备一个 USER、一个 AGENT 和一个 ADMIN 测试账户，不展示密码哈希或完整 Token。
-
-### 演示流程
-
-1. 调用 `POST /api/auth/register` 注册 USER；
-2. 调用 `POST /api/auth/login` 登录三种角色，后续只展示 `<access-token>`；
-3. 使用 USER Token 调用 `POST /api/tickets` 创建工单；
-4. 使用 USER Token 调用 `GET /api/tickets/mine`，说明按 JWT `sub` 过滤；
-5. 使用另一个 USER Token 查询该工单，展示 HTTP 404 / 40400；
-6. 使用 ADMIN Token 调用 `PATCH /api/tickets/{id}/assignee` 指派给 AGENT；
-7. 使用 AGENT Token 调用 `PATCH /api/tickets/{id}/status` 更新为 IN_PROGRESS；
-8. 通过只读 SQL或相关集成测试查看 `ticket_operation_logs`，说明当前没有日志查询 API；
-9. 展示 `mvn test` 汇总：329项、0失败、BUILD SUCCESS。
-
-演示不依赖前端，也不应现场打印真实 Secret、完整 JWT 或数据库密码。
+演示不依赖不存在的前端或日志查询 API，也不展示密码哈希、完整 JWT、客户端 Key、ownerToken、请求指纹、原始 Redis Key 或 Secret。
