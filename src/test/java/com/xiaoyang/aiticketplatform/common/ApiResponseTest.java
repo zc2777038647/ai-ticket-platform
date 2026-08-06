@@ -54,6 +54,15 @@ class ApiResponseTest {
     }
 
     @Test
+    void shouldExposeRateLimitExceededErrorCode() {
+        assertErrorCode(
+                ErrorCode.RATE_LIMIT_EXCEEDED,
+                42900,
+                "请求过于频繁，请稍后重试"
+        );
+    }
+
+    @Test
     void shouldExposeTicketStatusBusinessErrorCodes() {
         assertAll(
                 () -> assertErrorCode(

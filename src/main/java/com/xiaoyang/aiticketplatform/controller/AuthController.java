@@ -7,7 +7,9 @@ import com.xiaoyang.aiticketplatform.dto.response.LoginResponse;
 import com.xiaoyang.aiticketplatform.dto.response.CurrentUserResponse;
 import com.xiaoyang.aiticketplatform.dto.response.UserResponse;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
+import com.xiaoyang.aiticketplatform.ratelimit.RedisLoginRateLimiter;
 import com.xiaoyang.aiticketplatform.service.AuthService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,9 +26,14 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 public class AuthController {
 
     private final AuthService authService;
+    private final RedisLoginRateLimiter loginRateLimiter;
 
-    public AuthController(AuthService authService) {
+    public AuthController(
+            AuthService authService,
+            RedisLoginRateLimiter loginRateLimiter
+    ) {
         this.authService = authService;
+        this.loginRateLimiter = loginRateLimiter;
     }
 
     @PostMapping("/register")
@@ -40,8 +47,13 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<LoginResponse>> login(
-            @Valid @RequestBody LoginRequest request
+            @Valid @RequestBody LoginRequest request,
+            HttpServletRequest httpServletRequest
     ) {
+        loginRateLimiter.checkLoginAllowed(
+                httpServletRequest.getRemoteAddr(),
+                request.username()
+        );
         LoginResponse loginResponse = authService.login(request);
         return ResponseEntity.ok(ApiResponse.success(loginResponse));
     }

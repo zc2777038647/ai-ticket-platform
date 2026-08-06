@@ -15,6 +15,7 @@ public enum ErrorCode {
     INVALID_ASSIGNEE_ROLE(40903, "目标用户不是可指派的处理人"),
     TICKET_ALREADY_ASSIGNED(40904, "工单已指派给该处理人"),
     TICKET_ASSIGNMENT_CONFLICT(40905, "工单指派状态已发生变化，请刷新后重试"),
+    RATE_LIMIT_EXCEEDED(42900, "请求过于频繁，请稍后重试"),
     INTERNAL_ERROR(50000, "服务器内部错误");
 
     private final int code;

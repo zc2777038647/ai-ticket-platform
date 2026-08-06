@@ -5,6 +5,7 @@ import com.xiaoyang.aiticketplatform.common.ErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
@@ -107,6 +108,15 @@ public class GlobalExceptionHandler {
         LOGGER.warn("业务操作失败，错误码: {}", errorCode.getCode());
         return ResponseEntity.status(httpStatus)
                 .body(ApiResponse.failure(errorCode));
+    }
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleRateLimitExceeded(
+            RateLimitExceededException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(exception.getRetryAfterSeconds()))
+                .body(ApiResponse.failure(ErrorCode.RATE_LIMIT_EXCEEDED));
     }
 
     @ExceptionHandler(Exception.class)

@@ -13,6 +13,17 @@ spring:
       timeout: ${REDIS_TIMEOUT:2s}
 
 app:
+  rate-limit:
+    login:
+      enabled: false
+      key-prefix: ai-ticket:test:rate-limit:login
+      ip:
+        max-requests: 1000
+        window-seconds: 60
+      username:
+        max-requests: 1000
+        window-seconds: 60
+
   security:
     jwt:
       issuer: ai-ticket-platform

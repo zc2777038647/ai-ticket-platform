@@ -27,6 +27,17 @@ management:
       show-details: always
 
 app:
+  rate-limit:
+    login:
+      enabled: ${LOGIN_RATE_LIMIT_ENABLED:true}
+      key-prefix: ${LOGIN_RATE_LIMIT_KEY_PREFIX:ai-ticket:rate-limit:login}
+      ip:
+        max-requests: ${LOGIN_RATE_LIMIT_IP_MAX_REQUESTS:20}
+        window-seconds: ${LOGIN_RATE_LIMIT_IP_WINDOW_SECONDS:60}
+      username:
+        max-requests: ${LOGIN_RATE_LIMIT_USERNAME_MAX_REQUESTS:10}
+        window-seconds: ${LOGIN_RATE_LIMIT_USERNAME_WINDOW_SECONDS:60}
+
   security:
     jwt:
       issuer: ai-ticket-platform

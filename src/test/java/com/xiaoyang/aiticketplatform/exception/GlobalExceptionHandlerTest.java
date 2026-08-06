@@ -10,6 +10,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -37,6 +38,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class GlobalExceptionHandlerTest {
@@ -150,6 +152,20 @@ class GlobalExceptionHandlerTest {
                 .andExpect(content().string(not(containsString("用户不存在"))))
                 .andExpect(content().string(not(containsString("密码不正确"))))
                 .andExpect(content().string(not(containsString("BusinessException"))))
+                .andExpect(content().string(not(containsString("stackTrace"))));
+    }
+
+    @Test
+    void shouldReturnTooManyRequestsWithSafeRetryAfterHeader() throws Exception {
+        mockMvc.perform(get("/test/auth/rate-limit"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "17"))
+                .andExpect(jsonPath("$.code").value(42900))
+                .andExpect(jsonPath("$.message").value("请求过于频繁，请稍后重试"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("RateLimitExceededException"))))
+                .andExpect(content().string(not(containsString("username"))))
+                .andExpect(content().string(not(containsString("remoteAddr"))))
                 .andExpect(content().string(not(containsString("stackTrace"))));
     }
 
@@ -366,6 +382,11 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/auth/invalid-credentials")
         void throwInvalidCredentials() {
             throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
+        }
+
+        @GetMapping("/test/auth/rate-limit")
+        void throwRateLimitExceeded() {
+            throw new RateLimitExceededException(17);
         }
 
         @GetMapping("/test/auth/authorization-denied")

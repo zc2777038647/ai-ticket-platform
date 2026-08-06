@@ -8,15 +8,20 @@ import com.xiaoyang.aiticketplatform.dto.response.UserResponse;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.exception.GlobalExceptionHandler;
+import com.xiaoyang.aiticketplatform.exception.RateLimitExceededException;
+import com.xiaoyang.aiticketplatform.ratelimit.RedisLoginRateLimiter;
 import com.xiaoyang.aiticketplatform.service.AuthService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -30,6 +35,9 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -37,6 +45,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -50,6 +59,9 @@ class AuthControllerTest {
     @Mock
     private AuthService authService;
 
+    @Mock
+    private RedisLoginRateLimiter loginRateLimiter;
+
     private LocalValidatorFactoryBean validator;
     private MockMvc mockMvc;
 
@@ -57,7 +69,7 @@ class AuthControllerTest {
     void setUp() {
         validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
-        mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService))
+        mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, loginRateLimiter))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
                 .setMessageConverters(new JacksonJsonHttpMessageConverter())
@@ -170,6 +182,10 @@ class AuthControllerTest {
         when(authService.login(any(LoginRequest.class))).thenReturn(serviceResponse);
 
         mockMvc.perform(post("/api/auth/login")
+                        .with(request -> {
+                            request.setRemoteAddr("203.0.113.10");
+                            return request;
+                        })
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(validLoginRequestJson()))
                 .andExpect(status().isOk())
@@ -185,8 +201,10 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.passwordHash").doesNotExist())
                 .andExpect(jsonPath("$.data.secretKey").doesNotExist());
 
-        verify(authService, times(1)).login(any(LoginRequest.class));
-        verifyNoMoreInteractions(authService);
+        InOrder inOrder = inOrder(loginRateLimiter, authService);
+        inOrder.verify(loginRateLimiter).checkLoginAllowed("203.0.113.10", "Test_User");
+        inOrder.verify(authService).login(any(LoginRequest.class));
+        verifyNoMoreInteractions(loginRateLimiter, authService);
     }
 
     @Test
@@ -198,7 +216,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.code").value(40000))
                 .andExpect(jsonPath("$.data.username").value("用户名不能为空"));
 
-        verifyNoInteractions(authService);
+        verifyNoInteractions(loginRateLimiter, authService);
     }
 
     @Test
@@ -210,7 +228,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.code").value(40000))
                 .andExpect(jsonPath("$.data.password").value("密码不能为空"));
 
-        verifyNoInteractions(authService);
+        verifyNoInteractions(loginRateLimiter, authService);
     }
 
     @Test
@@ -223,7 +241,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.message").value("请求体格式错误"))
                 .andExpect(jsonPath("$.data").value(nullValue()));
 
-        verifyNoInteractions(authService);
+        verifyNoInteractions(loginRateLimiter, authService);
     }
 
     @Test
@@ -232,6 +250,10 @@ class AuthControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.INVALID_CREDENTIALS));
 
         mockMvc.perform(post("/api/auth/login")
+                        .with(request -> {
+                            request.setRemoteAddr("203.0.113.11");
+                            return request;
+                        })
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(validLoginRequestJson()))
                 .andExpect(status().isUnauthorized())
@@ -242,8 +264,58 @@ class AuthControllerTest {
                 .andExpect(content().string(not(containsString("密码不正确"))))
                 .andExpect(content().string(not(containsString("BusinessException"))));
 
-        verify(authService, times(1)).login(any(LoginRequest.class));
-        verifyNoMoreInteractions(authService);
+        InOrder inOrder = inOrder(loginRateLimiter, authService);
+        inOrder.verify(loginRateLimiter).checkLoginAllowed("203.0.113.11", "Test_User");
+        inOrder.verify(authService).login(any(LoginRequest.class));
+        verifyNoMoreInteractions(loginRateLimiter, authService);
+    }
+
+    @Test
+    void shouldReturnTooManyRequestsWithoutCallingAuthService() throws Exception {
+        doThrow(new RateLimitExceededException(23))
+                .when(loginRateLimiter)
+                .checkLoginAllowed("203.0.113.12", "Test_User");
+
+        mockMvc.perform(post("/api/auth/login")
+                        .with(request -> {
+                            request.setRemoteAddr("203.0.113.12");
+                            return request;
+                        })
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validLoginRequestJson()))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "23"))
+                .andExpect(jsonPath("$.code").value(42900))
+                .andExpect(jsonPath("$.message").value("请求过于频繁，请稍后重试"))
+                .andExpect(jsonPath("$.data").value(nullValue()));
+
+        verify(loginRateLimiter).checkLoginAllowed("203.0.113.12", "Test_User");
+        verify(authService, never()).login(any(LoginRequest.class));
+        verifyNoMoreInteractions(loginRateLimiter, authService);
+    }
+
+    @Test
+    void shouldFailClosedWhenRedisIsUnavailable() throws Exception {
+        doThrow(new RedisConnectionFailureException("test redis unavailable"))
+                .when(loginRateLimiter)
+                .checkLoginAllowed("203.0.113.13", "Test_User");
+
+        mockMvc.perform(post("/api/auth/login")
+                        .with(request -> {
+                            request.setRemoteAddr("203.0.113.13");
+                            return request;
+                        })
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validLoginRequestJson()))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.code").value(50000))
+                .andExpect(jsonPath("$.message").value("服务器内部错误"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("test redis unavailable"))));
+
+        verify(loginRateLimiter).checkLoginAllowed("203.0.113.13", "Test_User");
+        verify(authService, never()).login(any(LoginRequest.class));
+        verifyNoMoreInteractions(loginRateLimiter, authService);
     }
 
     @Test
