@@ -27,6 +27,15 @@ management:
       show-details: always
 
 app:
+  idempotency:
+    create-ticket:
+      enabled: ${CREATE_TICKET_IDEMPOTENCY_ENABLED:true}
+      key-prefix: ${CREATE_TICKET_IDEMPOTENCY_KEY_PREFIX:ai-ticket:idempotency:create-ticket}
+      processing-ttl-seconds: ${CREATE_TICKET_IDEMPOTENCY_PROCESSING_TTL_SECONDS:120}
+      success-ttl-seconds: ${CREATE_TICKET_IDEMPOTENCY_SUCCESS_TTL_SECONDS:86400}
+      minimum-key-length: ${CREATE_TICKET_IDEMPOTENCY_MINIMUM_KEY_LENGTH:8}
+      maximum-key-length: ${CREATE_TICKET_IDEMPOTENCY_MAXIMUM_KEY_LENGTH:128}
+
   rate-limit:
     login:
       enabled: ${LOGIN_RATE_LIMIT_ENABLED:true}

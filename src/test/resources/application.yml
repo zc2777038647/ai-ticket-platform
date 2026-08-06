@@ -13,6 +13,15 @@ spring:
       timeout: ${REDIS_TIMEOUT:2s}
 
 app:
+  idempotency:
+    create-ticket:
+      enabled: false
+      key-prefix: ai-ticket:test:idempotency:create-ticket
+      processing-ttl-seconds: 120
+      success-ttl-seconds: 600
+      minimum-key-length: 8
+      maximum-key-length: 128
+
   rate-limit:
     login:
       enabled: false
