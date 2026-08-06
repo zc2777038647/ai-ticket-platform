@@ -1,6 +1,7 @@
 package com.xiaoyang.aiticketplatform.idempotency;
 
 import com.xiaoyang.aiticketplatform.config.CreateTicketIdempotencyProperties;
+import com.xiaoyang.aiticketplatform.exception.InvalidIdempotencyKeyException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -84,7 +85,7 @@ class CreateTicketIdempotencyKeyGeneratorTest {
     @ValueSource(strings = {"", "   ", "short", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
     void shouldRejectInvalidClientKey(String idempotencyKey) {
         assertThrows(
-                IllegalArgumentException.class,
+                InvalidIdempotencyKeyException.class,
                 () -> generator.generateRedisKey(100L, idempotencyKey)
         );
     }
@@ -93,7 +94,7 @@ class CreateTicketIdempotencyKeyGeneratorTest {
     @ValueSource(strings = {"request\n123", "request\t123", "request\u0000123"})
     void shouldRejectControlCharacters(String idempotencyKey) {
         assertThrows(
-                IllegalArgumentException.class,
+                InvalidIdempotencyKeyException.class,
                 () -> generator.generateRedisKey(100L, idempotencyKey)
         );
     }

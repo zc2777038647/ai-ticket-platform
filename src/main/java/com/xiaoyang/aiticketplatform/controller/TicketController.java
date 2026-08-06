@@ -9,6 +9,7 @@ import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
+import com.xiaoyang.aiticketplatform.idempotency.CreateTicketIdempotencyCoordinator;
 import com.xiaoyang.aiticketplatform.service.TicketService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -29,18 +31,28 @@ import org.springframework.web.bind.annotation.RestController;
 public class TicketController {
 
     private final TicketService ticketService;
+    private final CreateTicketIdempotencyCoordinator createTicketIdempotencyCoordinator;
 
-    public TicketController(TicketService ticketService) {
+    public TicketController(
+            TicketService ticketService,
+            CreateTicketIdempotencyCoordinator createTicketIdempotencyCoordinator
+    ) {
         this.ticketService = ticketService;
+        this.createTicketIdempotencyCoordinator = createTicketIdempotencyCoordinator;
     }
 
     @PostMapping
     public ResponseEntity<ApiResponse<TicketResponse>> createTicket(
             @Valid @RequestBody CreateTicketRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             JwtAuthenticationToken authentication
     ) {
         Long creatorUserId = Long.valueOf(authentication.getName());
-        TicketResponse ticketResponse = ticketService.createTicket(request, creatorUserId);
+        TicketResponse ticketResponse = createTicketIdempotencyCoordinator.createTicket(
+                creatorUserId,
+                idempotencyKey,
+                request
+        );
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success(ticketResponse));
     }

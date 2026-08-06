@@ -4,6 +4,7 @@ public enum ErrorCode {
     VALIDATION_ERROR(40000, "请求参数校验失败"),
     MESSAGE_NOT_READABLE(40001, "请求体格式错误"),
     REQUEST_PARAMETER_INVALID(40002, "请求参数格式错误"),
+    INVALID_IDEMPOTENCY_KEY(40003, "幂等键不合法"),
     INVALID_CREDENTIALS(40100, "用户名或密码错误"),
     AUTHENTICATION_REQUIRED(40101, "请先登录或提供有效访问令牌"),
     AUTHORIZATION_DENIED(40300, "权限不足，无法执行此操作"),
@@ -15,6 +16,8 @@ public enum ErrorCode {
     INVALID_ASSIGNEE_ROLE(40903, "目标用户不是可指派的处理人"),
     TICKET_ALREADY_ASSIGNED(40904, "工单已指派给该处理人"),
     TICKET_ASSIGNMENT_CONFLICT(40905, "工单指派状态已发生变化，请刷新后重试"),
+    IDEMPOTENCY_REQUEST_IN_PROGRESS(40906, "相同请求正在处理中，请稍后重试"),
+    IDEMPOTENCY_KEY_REUSED(40907, "幂等键已用于不同请求"),
     RATE_LIMIT_EXCEEDED(42900, "请求过于频繁，请稍后重试"),
     INTERNAL_ERROR(50000, "服务器内部错误");
 

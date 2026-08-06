@@ -170,6 +170,39 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void shouldReturnBadRequestForInvalidIdempotencyKey() throws Exception {
+        mockMvc.perform(get("/test/idempotency/invalid-key"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40003))
+                .andExpect(jsonPath("$.message").value("幂等键不合法"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("Idempotency-Key"))));
+    }
+
+    @Test
+    void shouldReturnConflictWithRetryAfterWhenIdempotencyRequestIsProcessing()
+            throws Exception {
+        mockMvc.perform(get("/test/idempotency/in-progress"))
+                .andExpect(status().isConflict())
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, "17"))
+                .andExpect(jsonPath("$.code").value(40906))
+                .andExpect(jsonPath("$.message").value("相同请求正在处理中，请稍后重试"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("ownerToken"))));
+    }
+
+    @Test
+    void shouldReturnConflictWhenIdempotencyKeyIsReusedForDifferentPayload()
+            throws Exception {
+        mockMvc.perform(get("/test/idempotency/key-reused"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(40907))
+                .andExpect(jsonPath("$.message").value("幂等键已用于不同请求"))
+                .andExpect(jsonPath("$.data").value(nullValue()))
+                .andExpect(content().string(not(containsString("fingerprint"))));
+    }
+
+    @Test
     void shouldReturnForbiddenForAuthorizationDenied() throws Exception {
         mockMvc.perform(get("/test/auth/authorization-denied"))
                 .andExpect(status().isForbidden())
@@ -387,6 +420,21 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/test/auth/rate-limit")
         void throwRateLimitExceeded() {
             throw new RateLimitExceededException(17);
+        }
+
+        @GetMapping("/test/idempotency/invalid-key")
+        void throwInvalidIdempotencyKey() {
+            throw new InvalidIdempotencyKeyException();
+        }
+
+        @GetMapping("/test/idempotency/in-progress")
+        void throwIdempotencyRequestInProgress() {
+            throw new IdempotencyRequestInProgressException(17);
+        }
+
+        @GetMapping("/test/idempotency/key-reused")
+        void throwIdempotencyKeyReused() {
+            throw new BusinessException(ErrorCode.IDEMPOTENCY_KEY_REUSED);
         }
 
         @GetMapping("/test/auth/authorization-denied")

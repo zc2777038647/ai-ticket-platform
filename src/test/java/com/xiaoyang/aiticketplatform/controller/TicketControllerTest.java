@@ -13,6 +13,9 @@ import com.xiaoyang.aiticketplatform.enums.TicketStatus;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.exception.BusinessException;
 import com.xiaoyang.aiticketplatform.exception.GlobalExceptionHandler;
+import com.xiaoyang.aiticketplatform.exception.IdempotencyRequestInProgressException;
+import com.xiaoyang.aiticketplatform.exception.InvalidIdempotencyKeyException;
+import com.xiaoyang.aiticketplatform.idempotency.CreateTicketIdempotencyCoordinator;
 import com.xiaoyang.aiticketplatform.service.TicketService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,6 +55,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -61,6 +65,9 @@ class TicketControllerTest {
     @Mock
     private TicketService ticketService;
 
+    @Mock
+    private CreateTicketIdempotencyCoordinator createTicketIdempotencyCoordinator;
+
     private LocalValidatorFactoryBean validator;
     private MockMvc mockMvc;
 
@@ -68,7 +75,10 @@ class TicketControllerTest {
     void setUp() {
         validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
-        mockMvc = MockMvcBuilders.standaloneSetup(new TicketController(ticketService))
+        mockMvc = MockMvcBuilders.standaloneSetup(new TicketController(
+                        ticketService,
+                        createTicketIdempotencyCoordinator
+                ))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
                 .setMessageConverters(new JacksonJsonHttpMessageConverter())
@@ -90,10 +100,13 @@ class TicketControllerTest {
                 TicketPriority.HIGH,
                 TicketStatus.OPEN
         );
-        when(ticketService.createTicket(any(CreateTicketRequest.class), eq(100L))).thenReturn(serviceResponse);
+        when(createTicketIdempotencyCoordinator.createTicket(
+                eq(100L), eq("create-ticket-123"), any(CreateTicketRequest.class)
+        )).thenReturn(serviceResponse);
 
         mockMvc.perform(post("/api/tickets")
                         .principal(authentication())
+                        .header("Idempotency-Key", "create-ticket-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(validRequestJson()))
                 .andExpect(status().isCreated())
@@ -105,8 +118,9 @@ class TicketControllerTest {
                 .andExpect(jsonPath("$.data.status").value("OPEN"));
 
         ArgumentCaptor<CreateTicketRequest> requestCaptor = ArgumentCaptor.forClass(CreateTicketRequest.class);
-        verify(ticketService, times(1)).createTicket(requestCaptor.capture(), eq(100L));
-        verifyNoMoreInteractions(ticketService);
+        verify(createTicketIdempotencyCoordinator, times(1)).createTicket(
+                eq(100L), eq("create-ticket-123"), requestCaptor.capture());
+        verifyNoInteractions(ticketService);
         CreateTicketRequest capturedRequest = requestCaptor.getValue();
         assertAll(
                 () -> assertEquals("测试工单", capturedRequest.title()),
@@ -134,16 +148,19 @@ class TicketControllerTest {
                 .andExpect(jsonPath("$.message").value("请求参数校验失败"))
                 .andExpect(jsonPath("$.data.title").value("标题不能为空"));
 
-        verifyNoInteractions(ticketService);
+        verifyNoInteractions(ticketService, createTicketIdempotencyCoordinator);
     }
 
     @Test
-    void shouldReturnInternalErrorWhenServiceFails() throws Exception {
-        when(ticketService.createTicket(any(CreateTicketRequest.class), eq(100L)))
+    void shouldReturnInternalErrorWhenCoordinatorFails() throws Exception {
+        when(createTicketIdempotencyCoordinator.createTicket(
+                eq(100L), eq("create-ticket-123"), any(CreateTicketRequest.class)
+        ))
                 .thenThrow(new IllegalStateException("敏感内部错误"));
 
         mockMvc.perform(post("/api/tickets")
                         .principal(authentication())
+                        .header("Idempotency-Key", "create-ticket-123")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(validRequestJson()))
                 .andExpect(status().isInternalServerError())
@@ -152,8 +169,80 @@ class TicketControllerTest {
                 .andExpect(jsonPath("$.data").value(nullValue()))
                 .andExpect(content().string(not(containsString("敏感内部错误"))));
 
-        verify(ticketService, times(1)).createTicket(any(CreateTicketRequest.class), eq(100L));
-        verifyNoMoreInteractions(ticketService);
+        verify(createTicketIdempotencyCoordinator).createTicket(
+                eq(100L), eq("create-ticket-123"), any(CreateTicketRequest.class));
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldPassMissingHeaderAsNullToCoordinator() throws Exception {
+        when(createTicketIdempotencyCoordinator.createTicket(
+                eq(100L), eq(null), any(CreateTicketRequest.class)
+        )).thenReturn(ticketResponse());
+
+        mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson()))
+                .andExpect(status().isCreated());
+
+        verify(createTicketIdempotencyCoordinator).createTicket(
+                eq(100L), eq(null), any(CreateTicketRequest.class));
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldReturnInvalidIdempotencyKeyProtocol() throws Exception {
+        when(createTicketIdempotencyCoordinator.createTicket(
+                eq(100L), eq("short"), any(CreateTicketRequest.class)
+        )).thenThrow(new InvalidIdempotencyKeyException());
+
+        mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
+                        .header("Idempotency-Key", "short")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(40003))
+                .andExpect(jsonPath("$.message").value("幂等键不合法"));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldReturnInProgressProtocolWithRetryAfter() throws Exception {
+        when(createTicketIdempotencyCoordinator.createTicket(
+                eq(100L), eq("create-ticket-123"), any(CreateTicketRequest.class)
+        )).thenThrow(new IdempotencyRequestInProgressException(17));
+
+        mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
+                        .header("Idempotency-Key", "create-ticket-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson()))
+                .andExpect(status().isConflict())
+                .andExpect(header().string("Retry-After", "17"))
+                .andExpect(jsonPath("$.code").value(40906));
+
+        verifyNoInteractions(ticketService);
+    }
+
+    @Test
+    void shouldReturnKeyReusedProtocolForPayloadMismatch() throws Exception {
+        when(createTicketIdempotencyCoordinator.createTicket(
+                eq(100L), eq("create-ticket-123"), any(CreateTicketRequest.class)
+        )).thenThrow(new BusinessException(ErrorCode.IDEMPOTENCY_KEY_REUSED));
+
+        mockMvc.perform(post("/api/tickets")
+                        .principal(authentication())
+                        .header("Idempotency-Key", "create-ticket-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(validRequestJson()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(40907))
+                .andExpect(jsonPath("$.message").value("幂等键已用于不同请求"));
+
+        verifyNoInteractions(ticketService);
     }
 
     @Test
@@ -723,6 +812,17 @@ class TicketControllerTest {
                   "priority": "HIGH"
                 }
                 """;
+    }
+
+    private static TicketResponse ticketResponse() {
+        return new TicketResponse(
+                100L,
+                "测试工单",
+                "测试描述",
+                "测试用户",
+                TicketPriority.HIGH,
+                TicketStatus.OPEN
+        );
     }
 
     private static JwtAuthenticationToken authentication() {

@@ -63,6 +63,27 @@ class ApiResponseTest {
     }
 
     @Test
+    void shouldExposeIdempotencyErrorCodes() {
+        assertAll(
+                () -> assertErrorCode(
+                        ErrorCode.INVALID_IDEMPOTENCY_KEY,
+                        40003,
+                        "幂等键不合法"
+                ),
+                () -> assertErrorCode(
+                        ErrorCode.IDEMPOTENCY_REQUEST_IN_PROGRESS,
+                        40906,
+                        "相同请求正在处理中，请稍后重试"
+                ),
+                () -> assertErrorCode(
+                        ErrorCode.IDEMPOTENCY_KEY_REUSED,
+                        40907,
+                        "幂等键已用于不同请求"
+                )
+        );
+    }
+
+    @Test
     void shouldExposeTicketStatusBusinessErrorCodes() {
         assertAll(
                 () -> assertErrorCode(

@@ -1,6 +1,7 @@
 package com.xiaoyang.aiticketplatform.idempotency;
 
 import com.xiaoyang.aiticketplatform.config.CreateTicketIdempotencyProperties;
+import com.xiaoyang.aiticketplatform.exception.InvalidIdempotencyKeyException;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
@@ -25,17 +26,17 @@ public class CreateTicketIdempotencyKeyGenerator {
             throw new IllegalArgumentException("创建者用户 ID 必须为正数");
         }
         if (idempotencyKey == null) {
-            throw new IllegalArgumentException("幂等键不能为空");
+            throw new InvalidIdempotencyKeyException();
         }
 
         String normalizedKey = idempotencyKey.trim();
         int length = normalizedKey.length();
         if (length < properties.getMinimumKeyLength()
                 || length > properties.getMaximumKeyLength()) {
-            throw new IllegalArgumentException("幂等键长度不符合配置范围");
+            throw new InvalidIdempotencyKeyException();
         }
         if (normalizedKey.chars().anyMatch(Character::isISOControl)) {
-            throw new IllegalArgumentException("幂等键不能包含控制字符");
+            throw new InvalidIdempotencyKeyException();
         }
 
         return properties.getKeyPrefix() + ":" + digest(creatorUserId, normalizedKey);

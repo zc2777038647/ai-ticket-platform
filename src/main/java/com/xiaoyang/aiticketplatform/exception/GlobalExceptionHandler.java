@@ -110,6 +110,23 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.failure(errorCode));
     }
 
+    @ExceptionHandler(InvalidIdempotencyKeyException.class)
+    public ResponseEntity<ApiResponse<Void>> handleInvalidIdempotencyKey(
+            InvalidIdempotencyKeyException exception
+    ) {
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.failure(ErrorCode.INVALID_IDEMPOTENCY_KEY));
+    }
+
+    @ExceptionHandler(IdempotencyRequestInProgressException.class)
+    public ResponseEntity<ApiResponse<Void>> handleIdempotencyRequestInProgress(
+            IdempotencyRequestInProgressException exception
+    ) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(exception.getRetryAfterSeconds()))
+                .body(ApiResponse.failure(ErrorCode.IDEMPOTENCY_REQUEST_IN_PROGRESS));
+    }
+
     @ExceptionHandler(RateLimitExceededException.class)
     public ResponseEntity<ApiResponse<Void>> handleRateLimitExceeded(
             RateLimitExceededException exception
@@ -136,7 +153,8 @@ public class GlobalExceptionHandler {
                  USERNAME_ALREADY_EXISTS,
                  INVALID_ASSIGNEE_ROLE,
                  TICKET_ALREADY_ASSIGNED,
-                 TICKET_ASSIGNMENT_CONFLICT -> HttpStatus.CONFLICT;
+                 TICKET_ASSIGNMENT_CONFLICT,
+                 IDEMPOTENCY_KEY_REUSED -> HttpStatus.CONFLICT;
             default -> null;
         };
     }
