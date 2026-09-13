@@ -175,3 +175,77 @@ Service抛出业务异常时，当前owner尝试release，原业务异常继续�
 4. 增加用户停用、Refresh Token和Token撤销；
 5. 创建工单出现消息或外部副作用后再评估Outbox；
 6. 最后接入AI分类、优先级建议和回复草稿，并保留人工确认与审计。
+
+## 9. P8-5 Security Hardening
+
+P8-5.3 已将 HTTP 安全策略从开放兜底收紧为 fail-closed：
+
+### 9.1 安全规则变化
+
+实施前，未显式匹配的请求使用：
+
+```java
+.anyRequest().permitAll()
+```
+
+这意味着未来新增 Controller 如果忘记同步配置 matcher，可能被匿名访问。
+
+实施后采用：
+
+```java
+.dispatcherTypeMatchers(DispatcherType.FORWARD, DispatcherType.ERROR).permitAll()
+...
+.anyRequest().denyAll()
+```
+
+业务接口继续按公开、已认证和角色授权分层：
+
+- 注册、登录公开；
+- `/api/auth/me`、创建工单、我的工单和工单详情需要有效 JWT；
+- 全局工单列表和状态更新需要 AGENT 或 ADMIN；
+- 指派处理人需要 ADMIN；
+- `/actuator/health` 只公开基本健康状态；
+- `/actuator/info` 和 `/actuator` 仅 ADMIN 可访问。
+
+`/api/tickets/mine` 仍位于 `/api/tickets/*` 之前，避免被通用详情 matcher 覆盖。
+
+### 9.2 Actuator 信息收口
+
+健康检查从：
+
+```yaml
+show-details: always
+```
+
+改为：
+
+```yaml
+show-details: when-authorized
+roles: ADMIN
+```
+
+匿名用户、USER 和 AGENT 只能看到基本 `status`；ADMIN 才能看到 `components` 等详细信息。该角色配置已通过当前 JWT converter 生成的 `ROLE_ADMIN` 进行真实集成测试验证。
+
+### 9.3 Dispatcher 与测试证据
+
+`ERROR` 和 `FORWARD` dispatch 在授权链前显式放行，避免原始请求已经通过后，框架二次 dispatch 被默认拒绝。新增 `SecurityHardeningIntegrationTest` 使用真实 Spring Security filter chain、随机端口和嵌入式 Tomcat 验证：
+
+- test-only 的真实 endpoint 在匿名、USER、AGENT、ADMIN 下分别得到 401、403、403、403；
+- health 匿名、USER、AGENT 只有基本状态，ADMIN 能看到组件详情；
+- Actuator info/root 仅 ADMIN 可访问；
+- 真实 `sendError` 触发的 ERROR dispatch 不产生第二次 401/403 安全拒绝。
+
+本阶段没有生产 FORWARD/View 流程，因此 FORWARD 通过配置和全量回归验证，未人为添加生产功能。
+
+### 9.4 回归结果
+
+```text
+Surefire test classes: 61
+Tests run: 457
+Failures: 0
+Errors: 0
+Skipped: 0
+BUILD SUCCESS
+```
+
+P8-5 不改变用户、工单、数据库或 Redis 业务模型。未知路由错误协议以及 `NoResourceFoundException` 的统一响应仍是独立问题，不在本阶段扩大范围。

@@ -293,7 +293,7 @@ Controller 从已认证的 `JwtAuthenticationToken` 提取最小身份数据并�
 - 历史 `creator_user_id=NULL` 工单不能归属给 USER；
 - 没有分配给我的工单、取消指派或主动领取；
 - 操作日志没有生产查询接口，也不是数据库层物理防篡改审计；
-- `anyRequest().permitAll()` 要求未来新增接口时同步补充显式安全规则，否则可能意外公开；
+- SecurityFilterChain 已采用显式 matcher 与 `anyRequest().denyAll()`，未来新增接口必须加入授权矩阵；`ERROR`/`FORWARD` dispatcher 单独处理；
 - 没有多租户、用户停用、Token 撤销、消息通知或 AI 功能；
 - 限流仅覆盖登录接口，不是账户锁定，也不是滑动窗口或令牌桶；
 - 用户名限流使用 trim + `Locale.ROOT` 小写，而 `AuthService` 当前查询规范化仅小写，两者对首尾空格的语义存在差异；
