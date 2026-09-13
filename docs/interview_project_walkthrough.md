@@ -4,25 +4,25 @@
 
 ## 1. 30 秒版本
 
-我做的是一个 Spring Boot 工单平台后端，完成了注册登录、JWT 三角色授权、工单分页和状态流转、管理员指派及事务操作日志。状态和指派使用旧值条件更新，权限同时覆盖接口角色和 USER 对象所有权。P8 又基于 Redis Lua 增加登录双维度固定窗口限流和用户作用域创建幂等，支持处理中冲突与成功响应重放。项目目前有60个测试类、448项测试，并用真实 MySQL 和 Redis 验证关键链路；AI 能力仍未接入。
+我做的是一个 Java + Python 工单平台，完成了注册登录、JWT 三角色授权、工单分页和状态流转、管理员指派及事务操作日志。状态和指派使用旧值条件更新，权限同时覆盖接口角色和 USER 对象所有权。P8 又基于 Redis Lua 增加登录双维度固定窗口限流和用户作用域创建幂等，P9 通过同级 FastAPI 服务提供结构化分析建议、人工审核回复草稿、只读 Agent、RAG 与 MCP。项目目前有62个 Java 测试类、463项测试，并用真实 MySQL 和 Redis 验证关键链路。
 
 ## 2. 1 分钟版本
 
-这是一个单体 Java 工单后端，目标是先建立可靠业务底座，再支持后续智能分类等能力。项目使用 Spring Boot、MyBatis-Plus、MySQL 和 Flyway，实现注册登录、创建查询分页、顺序状态流转、ADMIN 指派和追加式日志；BCrypt、HS256 JWT 与 Spring Security 建立 USER、AGENT、ADMIN 三角色权限，Service 再依据 `creator_user_id` 做对象级所有权。
+这是一个 Java + Python 工单后端，Java 先建立可靠业务底座，再通过受控 HTTP 边界提供 AI 能力。项目使用 Spring Boot、MyBatis-Plus、MySQL 和 Flyway，实现注册登录、创建查询分页、顺序状态流转、ADMIN 指派和追加式日志；BCrypt、HS256 JWT 与 Spring Security 建立 USER、AGENT、ADMIN 三角色权限，Service 再依据 `creator_user_id` 做对象级所有权。
 
-并发方面，状态和处理人更新都把旧值放进 SQL 条件，业务 UPDATE 与日志 INSERT 在同一 MySQL 事务中提交。P8 接入 Spring Data Redis 和 Lettuce：登录用单 Key Lua 对 IP 和规范化用户名做固定窗口限流；创建工单用 JWT `sub` 隔离 `Idempotency-Key`，结合请求指纹、ownerToken 和 `PROCESSING/SUCCEEDED` 状态重放第一次成功响应。这个幂等只有有限 TTL，Redis 和 MySQL 不在同一事务，因此不宣称 exactly-once。60个测试类、448项测试覆盖单元、MVC、安全、真实 MySQL、真实 Redis 和 HTTP 链路。
+并发方面，状态和处理人更新都把旧值放进 SQL 条件，业务 UPDATE 与日志 INSERT 在同一 MySQL 事务中提交。P8 接入 Spring Data Redis 和 Lettuce：登录用单 Key Lua 对 IP 和规范化用户名做固定窗口限流；创建工单用 JWT `sub` 隔离 `Idempotency-Key`，结合请求指纹、ownerToken 和 `PROCESSING/SUCCEEDED` 状态重放第一次成功响应。这个幂等只有有限 TTL，Redis 和 MySQL 不在同一事务，因此不宣称 exactly-once。AI 客户端还覆盖连接拒绝、超时、4xx、5xx 和非法响应；Java 有62个测试类、463项测试。
 
 ## 3. 3～5 分钟完整版本
 
 ### 第一段：项目目标
 
-这是一个单体 Java 工单平台后端。当前先完成账户、权限、状态、指派、审计以及入口可靠性保护，因为未来即使加入 AI 分类或回复建议，也不能绕过可信身份和业务规则。当前没有模型调用、RAG 或 Agent。
+这是一个 Java 业务后端与同级 Python AI 服务组成的工单平台。Java 负责账户、权限、状态、指派、审计以及入口可靠性保护；Python 只输出建议、草稿或受控只读回答，不能绕过可信身份和业务规则，也不能直接修改工单。
 
 ### 第二段：分层与数据模型
 
 请求先经过 Spring Security Filter Chain，再进入 Controller；Controller 处理 HTTP、Validation 和认证主体，Service 处理业务规则与 MySQL 事务，MyBatis-Plus Mapper 访问数据库。核心有 users、tickets、ticket_operation_logs 三张表，Flyway V1～V6 保留演进历史。
 
-Redis 由 Spring Boot 自动配置 LettuceConnectionFactory 和 StringRedisTemplate。项目没有 Redisson、通用 Object 序列化或已经完成的工单缓存；Redis 当前只承载登录限流和创建幂等临时状态。
+Redis 由 Spring Boot 自动配置 LettuceConnectionFactory 和 StringRedisTemplate。项目没有 Redisson、通用 Object 序列化或已经完成的工单缓存；Redis 当前只承载登录限流和创建幂等临时状态。Python 默认使用 deterministic fake provider，真实 provider 通过环境变量配置。
 
 ### 第三段：JWT 与权限
 
@@ -52,7 +52,7 @@ acquire Lua 首次写 `PROCESSING`。相同 Key 和指纹仍在处理时返回40
 
 ### 第七段：测试证据和边界
 
-项目有60个 Surefire 测试类、448项测试。除了 Validation、Mockito、standalone MockMvc、Security 和真实 MySQL，还用真实 Redis验证 PING、TTL、INCR、SETNX、固定窗口和幂等 Lua状态机；HTTP 测试证明相同请求重放时数据库只有一张工单，不同用户同 Key 隔离。
+项目有62个 Surefire 测试类、463项测试。除了 Validation、Mockito、standalone MockMvc、Security 和真实 MySQL，还用真实 Redis验证 PING、TTL、INCR、SETNX、固定窗口和幂等 Lua状态机；HTTP 测试证明相同请求重放时数据库只有一张工单，不同用户同 Key 隔离；Python 另有12项 pytest 测试。
 
 协调器单元测试验证 Redis 获取失败 fail-closed、业务失败释放，以及 Service 成功后 complete 失败不释放。但没有通过杀进程或断网做破坏性崩溃测试，也没有高并发压测、多实例、Sentinel/Cluster、MySQL 持久化幂等或性能数据。
 
@@ -80,7 +80,7 @@ acquire Lua 首次写 `PROCESSING`。相同 Key 和指纹仍在处理时返回40
 
 ### 5.2 AI 应用后端岗位
 
-重点说明当前先建立可靠业务底座：可信身份、权限、状态机、审计、登录限流和创建幂等。限流和幂等可以保护未来高成本模型调用，但当前尚未接入模型。未来模型输出仍必须经过 Service 校验、人工确认和可追踪操作，不能直接写数据库。
+重点说明 Java 先建立可靠业务底座：可信身份、权限、状态机、审计、登录限流和创建幂等，再通过内部 HTTP 调用 Python。结构化分析是建议，回复是人工审核草稿，Agent 只读；默认 fake provider 不应冒充真实 LLM 效果，任何模型输出都不能直接写数据库。
 
 ### 5.3 测试开发岗位
 
@@ -95,7 +95,7 @@ acquire Lua 首次写 `PROCESSING`。相同 Key 和指纹仍在处理时返回40
 5. 相同用户、相同 Key 和请求再次调用，展示相同 TicketResponse 且数据库只有一条记录；
 6. 相同 Key 改变请求字段，展示 HTTP 409 / 40907；
 7. 使用 ADMIN 指派、AGENT 更新状态，并通过只读 SQL或测试展示操作日志；
-8. 展示 `mvn test` 的60类、448项、0失败结果；
+8. 展示 `mvn test` 的62类、463项、0失败结果，并展示 Python `pytest` 的12项通过结果；
 9. 最后主动说明 MySQL 提交后 Redis complete 前的三个一致性窗口。
 
 演示不依赖不存在的前端或日志查询 API，也不展示密码哈希、完整 JWT、客户端 Key、ownerToken、请求指纹、原始 Redis Key 或 Secret。
