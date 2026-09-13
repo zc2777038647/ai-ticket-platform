@@ -38,7 +38,7 @@ Java owns business truth. Python produces AI capability. Python has no Java data
 
 ## Configuration boundary
 
-Java reads `APP_AI` settings from `application.yml` / environment variables (`AI_SERVICE_BASE_URL`, `AI_SERVICE_INTERNAL_TOKEN`, `AI_SERVICE_CONNECT_TIMEOUT`, `AI_SERVICE_READ_TIMEOUT`). Python reads `AI_` settings through Pydantic Settings (`AI_PROVIDER_MODE`, `AI_MODEL`, `AI_LLM_TIMEOUT_SECONDS`, `AI_LLM_RETRY_COUNT`, `AI_RAG_TOP_K`, `AI_AGENT_MAX_TOOL_CALLS`). Changes take effect after the corresponding process restarts; there is no dynamic configuration center.
+Java reads the `app.ai` settings from `application.yml` / environment variables (`AI_SERVICE_BASE_URL`, `AI_SERVICE_INTERNAL_TOKEN`, `AI_SERVICE_CONNECT_TIMEOUT`, `AI_SERVICE_READ_TIMEOUT`). Python reads `AI_` settings through Pydantic Settings (`AI_PROVIDER_MODE`, `AI_MODEL`, `AI_LLM_TIMEOUT_SECONDS`, `AI_LLM_RETRY_COUNT`, `AI_RAG_TOP_K`, `AI_AGENT_MAX_TOOL_CALLS`). Changes take effect after the corresponding process restarts; there is no dynamic configuration center.
 
 Real provider credentials are environment-only. The repositories contain placeholders in `.env.example`, never API keys or local `.env` files.
 
