@@ -1,6 +1,6 @@
 # AI Ticket Platform
 
-基于 Spring Boot 的 AI 工单平台后端。当前版本完成了工单基础业务、认证授权、身份关联、指派与操作日志，并以 Redis Lua 为登录和创建链路增加有限范围的流量与重复请求保护；AI 分类、RAG 和 Agent 能力仍属于 Roadmap。
+基于 Spring Boot 的 AI 工单平台后端。当前版本完成了工单基础业务、认证授权、身份关联、指派与操作日志，并以 Redis Lua 为登录和创建链路增加有限范围的流量与重复请求保护；AI 能力由同级独立的 FastAPI 服务提供，Java 保持可信业务边界。
 
 ## 目录
 
@@ -87,9 +87,12 @@ flowchart LR
     TicketService --> MySQL
     TicketService --> Coordinator
     Coordinator --> Store
+    TicketService --> AiClient["AI Service Client"]
+    AiClient --> Python["FastAPI AI Service"]
+    Python --> Knowledge["Structured Provider / RAG / Agent / MCP"]
 ```
 
-生产接口只暴露 DTO，不直接返回 Entity。Controller 负责 HTTP 边界，Service 负责业务规则、对象所有权和 MySQL 事务，Mapper 负责 MyBatis-Plus 数据访问。Redis Lua 的单 Key 原子性不等于 Redis 与 MySQL 处于同一事务。
+生产接口只暴露 DTO，不直接返回 Entity。Controller 负责 HTTP 边界，Service 负责业务规则、对象所有权和 MySQL 事务，Mapper 负责 MyBatis-Plus 数据访问。AI Service 只产生建议和草稿，不拥有用户授权或工单写权限。Redis Lua 的单 Key 原子性不等于 Redis 与 MySQL 处于同一事务。
 
 ## 角色权限
 
@@ -242,8 +245,11 @@ mvn test
 | GET | `/api/tickets/{id}` | 按 ID 查询并执行对象级授权 |
 | PATCH | `/api/tickets/{id}/status` | AGENT、ADMIN 更新状态 |
 | PATCH | `/api/tickets/{id}/assignee` | ADMIN 指派 AGENT |
+| POST | `/api/tickets/{id}/ai-analysis` | AGENT、ADMIN 获取 AI 分类与优先级建议（不写工单） |
+| POST | `/api/tickets/{id}/ai-reply-draft` | AGENT、ADMIN 获取人工审核回复草稿 |
+| POST | `/api/tickets/{id}/ai-agent` | AGENT、ADMIN 调用受控只读 Agent |
 | GET | `/actuator/health` | 健康检查 |
-| GET | `/actuator/info` | Actuator 应用信息（当前配置已暴露） |
+| GET | `/actuator/info` | ADMIN 可访问的 Actuator 应用信息 |
 
 除注册、登录和健康检查外，接口使用：
 
@@ -264,14 +270,14 @@ mvn test
 结果：
 
 ```text
-Tests run: 448
+Tests run: 463
 Failures: 0
 Errors: 0
 Skipped: 0
 BUILD SUCCESS
 ```
 
-60 个 Surefire 测试类、448 个测试实例覆盖 DTO Validation、Service 单元测试、standalone MockMvc、Mapper/MySQL 持久化、HTTP 全链路、Spring Security、Redis 基础设施、Lua 固定窗口限流、创建幂等状态机和 Redis/MySQL 故障边界；它们并不全部是端到端测试。
+61 个 Surefire 测试类、463 个测试实例覆盖 DTO Validation、Service 单元测试、standalone MockMvc、Mapper/MySQL 持久化、HTTP 全链路、Spring Security、Redis 基础设施、Lua 固定窗口限流、创建幂等状态机、Redis/MySQL 故障边界和 Java→Python AI HTTP 客户端错误边界；它们并不全部是端到端测试。Python 服务另有独立 `pytest` 测试。
 
 ## 详细文档
 
@@ -282,6 +288,7 @@ BUILD SUCCESS
 - [P0～P7 阶段复盘](docs/p7_project_stage_review.md)
 - [P8 Redis、登录限流与创建幂等复盘](docs/p8_project_stage_review.md)
 - [创建工单幂等架构决策](docs/p8_create_ticket_idempotency_decision.md)
+- [Java/Python AI 服务架构](docs/ai_service_architecture.md)
 - `docs/p1_create_ticket_module_review.md` 至 `docs/p4_ticket_status_transition_review.md`：历史阶段学习复盘。
 
 ## 项目边界与 Roadmap
@@ -300,8 +307,6 @@ BUILD SUCCESS
 - 可信反向代理后的客户端 IP 解析；
 - 消息队列与通知；
 - 多租户隔离；
-- AI 工单分类、优先级建议和回复草稿；
-- RAG、Tool Calling、Agent 与人工确认流程；
 - Outbox 与外部副作用的一致性处理；
 - 压力测试、生产部署与容灾验证。
 

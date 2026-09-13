@@ -404,7 +404,37 @@ GET /actuator/health
 GET /actuator/info
 ```
 
-该端点同样由 Actuator 管理。`SecurityConfig` 只显式匹配了 health，但当前兜底规则是 `anyRequest().permitAll()`，所以 info 实际也无需认证。这一行为应在未来收紧兜底规则时重新核对。
+该端点同样由 Actuator 管理。当前安全规则要求 `ADMIN`；health 对匿名开放但详情仅在授权时显示。
+
+## 4.1 AI 能力接口
+
+AI 接口由 Java 统一执行认证、角色授权和工单对象查询，再通过配置化 HTTP 客户端调用同级 `ai-ticket-ai-service`。Python 只返回建议或草稿，不直接更新工单。
+
+### 4.1.1 工单分析建议
+
+```text
+POST /api/tickets/{id}/ai-analysis
+```
+
+允许角色：`AGENT`、`ADMIN`。成功为 HTTP 200，`data` 包含 `category`、`suggestedPriority`、`reason`、`confidence`。结果是建议，不会修改 `priority`、`status` 或处理人。
+
+### 4.1.2 回复草稿
+
+```text
+POST /api/tickets/{id}/ai-reply-draft
+```
+
+允许角色：`AGENT`、`ADMIN`。成功 `data` 包含 `draft` 和 `tone`；草稿必须由人工审核，不会自动发送或写入正式回复。
+
+### 4.1.3 受控只读 Agent
+
+```text
+POST /api/tickets/{id}/ai-agent
+```
+
+允许角色：`AGENT`、`ADMIN`。请求体为 `{ "query": "..." }`。Agent 只能通过 Python 的 allowlist 调用 Java internal 只读工单/历史接口，且有最大工具调用次数限制。
+
+AI 服务不可用映射为 HTTP 503 / `50300`；响应无法通过结构化 DTO 校验或 Python 返回 4xx 请求错误映射为 HTTP 502 / `50200`。Java 不把 AI 失败伪装为成功，也不把 AI 建议直接当作业务决定。
 
 ## 5. 完整错误码表
 
@@ -428,6 +458,8 @@ GET /actuator/info
 | 40906 | 409 | 相同请求正在处理中，请稍后重试 | 相同用户、Key 和请求指纹处于 PROCESSING |
 | 40907 | 409 | 幂等键已用于不同请求 | 相同用户和 Key 对应不同请求指纹 |
 | 42900 | 429 | 请求过于频繁，请稍后重试 | 登录 IP 或规范化用户名固定窗口超限 |
+| 50200 | 502 | AI 服务响应格式无效 | Python 返回非法 JSON、schema 不匹配或 4xx 请求错误 |
+| 50300 | 503 | AI 服务暂时不可用 | 连接拒绝、读取超时或 Python 5xx |
 | 50000 | 500 | 服务器内部错误 | 未预期异常、异常影响行数、日志写入失败等 |
 
 HTTP 状态码表达传输层结果；五位应用码区分项目内部错误类型，两者不能互相替代。
@@ -441,4 +473,4 @@ HTTP 状态码表达传输层结果；五位应用码区分项目内部错误类
 - 没有分配给我的工单接口；
 - 没有取消指派、主动领取、通知或评论接口；
 - 没有操作日志查询、修改或删除接口；
-- 没有 AI 分类、RAG 或 Agent 接口。
+- AI 能力服务位于同级目录 `ai-ticket-ai-service`；Java 不把 Python 当作认证系统或核心数据库服务。
