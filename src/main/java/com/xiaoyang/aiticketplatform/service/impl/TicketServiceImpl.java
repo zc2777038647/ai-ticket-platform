@@ -5,6 +5,10 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaoyang.aiticketplatform.common.ErrorCode;
+import com.xiaoyang.aiticketplatform.ai.AiServiceClient;
+import com.xiaoyang.aiticketplatform.dto.request.ai.AiAgentRequest;
+import com.xiaoyang.aiticketplatform.dto.request.ai.AiAnalysisRequest;
+import com.xiaoyang.aiticketplatform.dto.request.ai.AiReplyDraftRequest;
 import com.xiaoyang.aiticketplatform.dto.request.AssignTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
@@ -12,6 +16,10 @@ import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
+import com.xiaoyang.aiticketplatform.dto.response.TicketOperationLogResponse;
+import com.xiaoyang.aiticketplatform.dto.response.ai.AiAgentResponse;
+import com.xiaoyang.aiticketplatform.dto.response.ai.AiAnalysisResponse;
+import com.xiaoyang.aiticketplatform.dto.response.ai.AiReplyDraftResponse;
 import com.xiaoyang.aiticketplatform.entity.Ticket;
 import com.xiaoyang.aiticketplatform.entity.TicketOperationLog;
 import com.xiaoyang.aiticketplatform.entity.UserAccount;
@@ -36,15 +44,18 @@ public class TicketServiceImpl implements TicketService {
     private final TicketMapper ticketMapper;
     private final UserAccountMapper userAccountMapper;
     private final TicketOperationLogMapper ticketOperationLogMapper;
+    private final AiServiceClient aiServiceClient;
 
     public TicketServiceImpl(
             TicketMapper ticketMapper,
             UserAccountMapper userAccountMapper,
-            TicketOperationLogMapper ticketOperationLogMapper
+            TicketOperationLogMapper ticketOperationLogMapper,
+            AiServiceClient aiServiceClient
     ) {
         this.ticketMapper = ticketMapper;
         this.userAccountMapper = userAccountMapper;
         this.ticketOperationLogMapper = ticketOperationLogMapper;
+        this.aiServiceClient = aiServiceClient;
     }
 
     @Override
@@ -298,5 +309,67 @@ public class TicketServiceImpl implements TicketService {
                 ticket.getPriority(),
                 ticket.getStatus()
         );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AiAnalysisResponse analyzeTicket(Long id, Long requesterUserId, UserRole requesterRole) {
+        TicketResponse ticket = getTicketById(id, requesterUserId, requesterRole);
+        return aiServiceClient.analyze(new AiAnalysisRequest(
+                ticket.id(), ticket.title(), ticket.description(), ticket.priority()
+        ));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AiReplyDraftResponse draftTicketReply(Long id, Long requesterUserId, UserRole requesterRole) {
+        TicketResponse ticket = getTicketById(id, requesterUserId, requesterRole);
+        return aiServiceClient.draftReply(new AiReplyDraftRequest(
+                ticket.id(), ticket.title(), ticket.description(), ticket.creatorName()
+        ));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AiAgentResponse runTicketAgent(
+            Long id,
+            AiAgentRequest request,
+            Long requesterUserId,
+            UserRole requesterRole
+    ) {
+        getTicketById(id, requesterUserId, requesterRole);
+        return aiServiceClient.runAgent(id, request.query());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public TicketResponse getTicketForAiTool(Long id) {
+        Ticket ticket = ticketMapper.selectById(id);
+        if (ticket == null) {
+            throw new BusinessException(ErrorCode.TICKET_NOT_FOUND);
+        }
+        return toResponse(ticket);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<TicketOperationLogResponse> getTicketHistoryForAiTool(Long id) {
+        getTicketForAiTool(id);
+        return ticketOperationLogMapper.selectList(
+                        Wrappers.<TicketOperationLog>lambdaQuery()
+                                .eq(TicketOperationLog::getTicketId, id)
+                                .orderByAsc(TicketOperationLog::getCreatedAt)
+                                .orderByAsc(TicketOperationLog::getId)
+                ).stream()
+                .map(log -> new TicketOperationLogResponse(
+                        log.getId(),
+                        log.getTicketId(),
+                        log.getOperatorUserId(),
+                        log.getOperationType(),
+                        log.getBeforeValue(),
+                        log.getAfterValue(),
+                        log.getCreatedAt()
+                ))
+                .toList();
     }
 }

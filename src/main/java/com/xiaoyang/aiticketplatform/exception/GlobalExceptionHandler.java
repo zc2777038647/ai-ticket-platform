@@ -155,6 +155,8 @@ public class GlobalExceptionHandler {
                  TICKET_ALREADY_ASSIGNED,
                  TICKET_ASSIGNMENT_CONFLICT,
                  IDEMPOTENCY_KEY_REUSED -> HttpStatus.CONFLICT;
+            case AI_RESPONSE_INVALID -> HttpStatus.BAD_GATEWAY;
+            case AI_SERVICE_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             default -> null;
         };
     }

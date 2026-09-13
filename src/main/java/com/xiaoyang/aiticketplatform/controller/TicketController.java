@@ -5,9 +5,14 @@ import com.xiaoyang.aiticketplatform.dto.request.CreateTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.AssignTicketRequest;
 import com.xiaoyang.aiticketplatform.dto.request.TicketPageQuery;
 import com.xiaoyang.aiticketplatform.dto.request.UpdateTicketStatusRequest;
+import com.xiaoyang.aiticketplatform.dto.request.AiAgentQueryRequest;
+import com.xiaoyang.aiticketplatform.dto.request.ai.AiAgentRequest;
 import com.xiaoyang.aiticketplatform.dto.response.PageResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketAssignmentResponse;
 import com.xiaoyang.aiticketplatform.dto.response.TicketResponse;
+import com.xiaoyang.aiticketplatform.dto.response.ai.AiAgentResponse;
+import com.xiaoyang.aiticketplatform.dto.response.ai.AiAnalysisResponse;
+import com.xiaoyang.aiticketplatform.dto.response.ai.AiReplyDraftResponse;
 import com.xiaoyang.aiticketplatform.enums.UserRole;
 import com.xiaoyang.aiticketplatform.idempotency.CreateTicketIdempotencyCoordinator;
 import com.xiaoyang.aiticketplatform.service.TicketService;
@@ -114,6 +119,43 @@ public class TicketController {
                 id,
                 request,
                 currentUserId(authentication)
+        );
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @PostMapping("/{id}/ai-analysis")
+    public ResponseEntity<ApiResponse<AiAnalysisResponse>> analyzeTicket(
+            @PathVariable @Positive(message = "工单ID必须为正数") Long id,
+            JwtAuthenticationToken authentication
+    ) {
+        AiAnalysisResponse response = ticketService.analyzeTicket(
+                id, currentUserId(authentication), currentUserRole(authentication)
+        );
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @PostMapping("/{id}/ai-reply-draft")
+    public ResponseEntity<ApiResponse<AiReplyDraftResponse>> draftTicketReply(
+            @PathVariable @Positive(message = "工单ID必须为正数") Long id,
+            JwtAuthenticationToken authentication
+    ) {
+        AiReplyDraftResponse response = ticketService.draftTicketReply(
+                id, currentUserId(authentication), currentUserRole(authentication)
+        );
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    @PostMapping("/{id}/ai-agent")
+    public ResponseEntity<ApiResponse<AiAgentResponse>> runTicketAgent(
+            @PathVariable @Positive(message = "工单ID必须为正数") Long id,
+            @Valid @RequestBody AiAgentQueryRequest request,
+            JwtAuthenticationToken authentication
+    ) {
+        AiAgentResponse response = ticketService.runTicketAgent(
+                id,
+                new AiAgentRequest(id, request.query()),
+                currentUserId(authentication),
+                currentUserRole(authentication)
         );
         return ResponseEntity.ok(ApiResponse.success(response));
     }

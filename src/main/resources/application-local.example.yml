@@ -16,3 +16,11 @@ mybatis-plus:
 
   global-config:
     banner: false
+
+app:
+  ai:
+    enabled: true
+    base-url: http://127.0.0.1:8000
+    internal-token: replace-with-local-internal-token
+    connect-timeout: 2s
+    read-timeout: 10s

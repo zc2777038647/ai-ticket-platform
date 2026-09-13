@@ -44,10 +44,19 @@ public class SecurityConfig {
                         .hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PATCH, "/api/tickets/*/status")
                         .hasAnyRole("AGENT", "ADMIN")
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/tickets/*/ai-analysis",
+                                "/api/tickets/*/ai-reply-draft",
+                                "/api/tickets/*/ai-agent"
+                        )
+                        .hasAnyRole("AGENT", "ADMIN")
                         .requestMatchers(HttpMethod.GET, "/actuator/info")
                         .hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/actuator")
                         .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/internal/ai/tickets/*", "/internal/ai/tickets/*/history")
+                        .permitAll()
                         .anyRequest().denyAll())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(authenticationEntryPoint)

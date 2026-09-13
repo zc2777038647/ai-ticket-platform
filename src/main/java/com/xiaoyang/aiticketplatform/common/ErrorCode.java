@@ -19,6 +19,8 @@ public enum ErrorCode {
     IDEMPOTENCY_REQUEST_IN_PROGRESS(40906, "相同请求正在处理中，请稍后重试"),
     IDEMPOTENCY_KEY_REUSED(40907, "幂等键已用于不同请求"),
     RATE_LIMIT_EXCEEDED(42900, "请求过于频繁，请稍后重试"),
+    AI_RESPONSE_INVALID(50200, "AI 服务响应格式无效"),
+    AI_SERVICE_UNAVAILABLE(50300, "AI 服务暂时不可用"),
     INTERNAL_ERROR(50000, "服务器内部错误");
 
     private final int code;

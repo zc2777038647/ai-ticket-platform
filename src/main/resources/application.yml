@@ -28,6 +28,13 @@ management:
       roles: ADMIN
 
 app:
+  ai:
+    enabled: ${AI_SERVICE_ENABLED:true}
+    base-url: ${AI_SERVICE_BASE_URL:http://127.0.0.1:8000}
+    internal-token: ${AI_SERVICE_INTERNAL_TOKEN:dev-internal-token}
+    connect-timeout: ${AI_SERVICE_CONNECT_TIMEOUT:2s}
+    read-timeout: ${AI_SERVICE_READ_TIMEOUT:10s}
+
   idempotency:
     create-ticket:
       enabled: ${CREATE_TICKET_IDEMPOTENCY_ENABLED:true}
