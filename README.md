@@ -277,7 +277,7 @@ Skipped: 0
 BUILD SUCCESS
 ```
 
-61 个 Surefire 测试类、463 个测试实例覆盖 DTO Validation、Service 单元测试、standalone MockMvc、Mapper/MySQL 持久化、HTTP 全链路、Spring Security、Redis 基础设施、Lua 固定窗口限流、创建幂等状态机、Redis/MySQL 故障边界和 Java→Python AI HTTP 客户端错误边界；它们并不全部是端到端测试。Python 服务另有独立 `pytest` 测试。
+62 个 Surefire 测试类、463 个测试实例覆盖 DTO Validation、Service 单元测试、standalone MockMvc、Mapper/MySQL 持久化、HTTP 全链路、Spring Security、Redis 基础设施、Lua 固定窗口限流、创建幂等状态机、Redis/MySQL 故障边界和 Java→Python AI HTTP 客户端错误边界；它们并不全部是端到端测试。Python 服务另有独立 `pytest` 测试。
 
 ## 详细文档
 
