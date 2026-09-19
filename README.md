@@ -2,6 +2,15 @@
 
 基于 Spring Boot 的 AI 工单平台后端。当前版本完成了工单基础业务、认证授权、身份关联、指派与操作日志，并以 Redis Lua 为登录和创建链路增加有限范围的流量与重复请求保护；AI 能力由同级独立的 FastAPI 服务提供，Java 保持可信业务边界。
 
+> 面向 Java 后端实习展示：这是一个以工单生命周期为主线、补充认证授权、并发更新、Redis 基础设施和受控 AI 调用边界的可运行后端项目。
+
+## Resume Summary
+
+- 设计工单状态流转、条件 UPDATE 与事务内操作日志，避免并发请求覆盖并保持业务变更和审计记录的一致提交。
+- 使用 JWT、USER/AGENT/ADMIN RBAC 与对象级授权，按 `creator_user_id` 区分“我的工单”和客服全局查询，并以 fail-closed Security 默认规则收口未知接口。
+- 使用 Redis Lua 固定窗口脚本实现登录限流，并以 `PROCESSING` / `SUCCEEDED` 状态机、请求指纹和响应重放实现有限窗口的创建幂等。
+- 通过带超时和错误映射的 Java→Python HTTP 客户端接入结构化 AI 建议；Python 故障不会替代或修改 Java 的核心业务事实。
+
 ## 目录
 
 - [项目能力](#项目能力)
@@ -67,7 +76,7 @@
 
 ```mermaid
 flowchart LR
-    Client["HTTP Client"] --> Security["Spring Security Filter Chain"]
+    Browser["Browser / Vue Demo"] --> Security["Java Spring Boot / Security"]
     Security --> Controller["Controller"]
     Controller --> Service["Service / Transaction"]
     Service --> Mapper["MyBatis-Plus Mapper"]
@@ -91,6 +100,8 @@ flowchart LR
     AiClient --> Python["FastAPI AI Service"]
     Python --> Knowledge["Structured Provider / RAG / Agent / MCP"]
 ```
+
+浏览器只调用 Java 业务 API；Java 才是认证、授权、工单写入和事务的可信边界，Java 再以受控 HTTP 客户端调用同级 Python AI Service。Python 不连接 Java MySQL，也不直接修改 `tickets`。
 
 生产接口只暴露 DTO，不直接返回 Entity。Controller 负责 HTTP 边界，Service 负责业务规则、对象所有权和 MySQL 事务，Mapper 负责 MyBatis-Plus 数据访问。AI Service 只产生建议和草稿，不拥有用户授权或工单写权限。Redis Lua 的单 Key 原子性不等于 Redis 与 MySQL 处于同一事务。
 
@@ -278,6 +289,14 @@ BUILD SUCCESS
 ```
 
 62 个 Surefire 测试类、463 个测试实例覆盖 DTO Validation、Service 单元测试、standalone MockMvc、Mapper/MySQL 持久化、HTTP 全链路、Spring Security、Redis 基础设施、Lua 固定窗口限流、创建幂等状态机、Redis/MySQL 故障边界和 Java→Python AI HTTP 客户端错误边界；它们并不全部是端到端测试。Python 服务另有独立 `pytest` 测试。
+
+配套仓库当前证据：Python `12 passed`；Vue Demo `npm run build` 成功。三者的数字分别代表各自仓库的真实验证结果，不合并虚构为端到端测试数量。
+
+## Related Repositories
+
+- [Python AI Service](https://github.com/zc2777038647/ai-ticket-ai-service)：FastAPI AI capability service，负责结构化建议、回复草稿、只读 Agent、RAG 与 MCP 演示。
+- [Vue Demo Console](https://github.com/zc2777038647/ai-ticket-web)：面向 GitHub、简历和面试演示的独立前端，浏览器只访问 Java API。
+- 三个项目保持同级独立仓库，不把 Python 或 Vue 嵌入 Java 工程。
 
 ## 详细文档
 
